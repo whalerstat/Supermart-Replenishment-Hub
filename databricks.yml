@@ -8,6 +8,8 @@ variables:
     description: Lakebase database resource name
   model_service:
     description: Unity AI Gateway model service (catalog.schema.service) that drafts the e-mails (Claude Haiku 5.5)
+  genie_space_id:
+    description: Genie space over the app's mock tables (scripts/build-genie-space.mjs prints the id)
 
 resources:
   apps:
@@ -17,6 +19,8 @@ resources:
       source_code_path: ./
       lifecycle:
         started: true          # deploy also starts the app
+      user_api_scopes:         # Genie runs on behalf of the signed-in user
+        - genie
       resources:
         - name: postgres
           postgres:
@@ -28,6 +32,11 @@ resources:
             securable_type: MODEL_SERVICE
             permission: EXECUTE
             securable_full_name: ${var.model_service}
+        - name: genie-space
+          genie_space:
+            name: genie-space
+            space_id: ${var.genie_space_id}
+            permission: CAN_RUN
 
 targets:
   default:
@@ -40,3 +49,4 @@ targets:
       postgres_branch: projects/retail-demos/branches/production
       postgres_database: projects/retail-demos/branches/production/databases/databricks-postgres
       model_service: workspace.ai_gateway.haiku55
+      genie_space_id: 01f1d5d3b68510518581c8791a8fd563
