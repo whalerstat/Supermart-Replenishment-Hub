@@ -64,14 +64,32 @@ interface LiveRun {
 }
 /** The current or last run since the server started; null after a reset. */
 let live: LiveRun | null = null;
+/**
+ * Bumped when a run starts or ends and when a reset completes, so a screen that missed the moment
+ * (polls failed, tab asleep, other device) still refreshes its history and decisions.
+ */
+let epoch = 0;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function playRun(id: number): Promise<void> {
+  // Keep the lock alive for as long as a step's queries run, however slow, so no run or reset overlaps.
+  const keepAlive = setInterval(() => {
+    if (activeRun?.id === id) activeRun.lastSeen = Date.now();
+  }, 10_000);
+  try {
+    await playSteps(id);
+  } finally {
+    clearInterval(keepAlive);
+    if (activeRun?.id === id) activeRun = null;
+    epoch++;
+  }
+}
+
+async function playSteps(id: number): Promise<void> {
   for (const task of TASKS) {
     if (live?.run_id !== id) return;
     live.tasks[task] = 'running';
-    if (activeRun?.id === id) activeRun.lastSeen = Date.now();
     try {
       const stats =
         task === 'publish'
@@ -87,12 +105,10 @@ async function playRun(id: number): Promise<void> {
         live.error = err instanceof Error ? err.message : String(err);
         live.finished = true;
       }
-      if (activeRun?.id === id) activeRun = null;
       return;
     }
   }
   if (live?.run_id === id) live.finished = true;
-  if (activeRun?.id === id) activeRun = null;
 }
 
 function busyMessage(): string {
@@ -100,6 +116,11 @@ function busyMessage(): string {
 }
 
 export function registerRoutes(app: Application): void {
+  // A run the process was playing when it last stopped can never finish: close it out on start.
+  void sql(`UPDATE ${S}.pipeline_runs SET status = 'failed', finished_at = now() WHERE status = 'running'`).catch(
+    (err: unknown) => console.error('[api] closing interrupted runs', err)
+  );
+
   app.get('/api/whoami', (req, res) => {
     res.json({ email: req.header('x-forwarded-email') ?? null, user: req.header('x-forwarded-user') ?? null });
   });
@@ -157,6 +178,7 @@ export function registerRoutes(app: Application): void {
         error: null,
         finished: false,
       };
+      epoch++;
       void playRun(id);
       res.json({ run_id: id, tasks: TASKS });
     } catch (err) {
@@ -167,7 +189,7 @@ export function registerRoutes(app: Application): void {
 
   // Every open screen (desktop and phone) polls this and plays the same run.
   app.get('/api/pipeline/live', (_req, res) => {
-    res.json({ live });
+    res.json({ live, epoch });
   });
 
   // ── Screen 2 ──
@@ -313,6 +335,7 @@ export function registerRoutes(app: Application): void {
     } finally {
       clearInterval(keepAlive);
       if (activeRun === claim) activeRun = null;
+      epoch++;
     }
   });
 }

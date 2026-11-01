@@ -26,7 +26,6 @@ import {
   dLong,
   moneyK,
   nf,
-  getJson,
   postJson,
   useJson,
   type PipelineHistory,
@@ -375,6 +374,9 @@ export function PipelineScreen({
 
   // The server plays the run; this screen (and any other open one, desktop or phone) just follows it.
   const lastRun = useRef<{ id: number; finished: boolean } | null>(null);
+  const lastEpoch = useRef<number | null>(null);
+  const [startError, setStartError] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
   const onDone = useRef(onRunComplete);
   useEffect(() => {
     onDone.current = onRunComplete;
@@ -386,8 +388,16 @@ export function PipelineScreen({
     const tick = async () => {
       let active = false;
       try {
-        const { live } = await getJson<{ live: LiveRun | null }>('/api/pipeline/live');
+        // A hung request must not stall the loop, so each poll gives up after 5 s.
+        const r = await fetch('/api/pipeline/live', { signal: AbortSignal.timeout(5_000) });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const { live, epoch } = (await r.json()) as { live: LiveRun | null; epoch: number };
         if (!alive) return;
+        if (lastEpoch.current !== null && epoch !== lastEpoch.current) {
+          setHistoryKey((k) => k + 1);
+          onDone.current?.();
+        }
+        lastEpoch.current = epoch;
         const prev = lastRun.current;
         if (!live) {
           if (prev) {
@@ -395,7 +405,6 @@ export function PipelineScreen({
             setStats({});
             setRunId(null);
             setError(null);
-            setHistoryKey((k) => k + 1);
           }
           lastRun.current = null;
         } else {
@@ -404,12 +413,6 @@ export function PipelineScreen({
           setStatus(live.tasks);
           setStats(live.stats as RunStats);
           setError(live.error);
-          if (prev?.id !== live.run_id) setHistoryKey((k) => k + 1);
-          // Only a finish seen live counts, not a run that was already over when this screen opened.
-          if (prev && live.finished && !(prev.id === live.run_id && prev.finished)) {
-            setHistoryKey((k) => k + 1);
-            if (!live.error) onDone.current?.();
-          }
           lastRun.current = { id: live.run_id, finished: live.finished };
         }
       } catch {
@@ -417,20 +420,32 @@ export function PipelineScreen({
       }
       if (alive) timer = setTimeout(() => void tick(), document.hidden ? 5_000 : active ? 500 : 2_000);
     };
+    // Coming back to the tab (or app) catches up at once instead of after the slow hidden interval.
+    const onVisible = () => {
+      if (document.hidden) return;
+      clearTimeout(timer);
+      void tick();
+    };
+    document.addEventListener('visibilitychange', onVisible);
     void tick();
     return () => {
       alive = false;
       clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisible);
     };
   }, [poke]);
 
   async function run() {
-    setError(null);
+    setStartError(null);
+    setStarting(true);
     try {
       await postJson<{ run_id: number }>('/api/pipeline/runs', {});
       setPoke((k) => k + 1);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      // Kept apart from the polled run error, which the next poll would otherwise overwrite.
+      setStartError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setStarting(false);
     }
   }
 
@@ -475,7 +490,7 @@ export function PipelineScreen({
           )}
           <Button
             onClick={() => void run()}
-            disabled={running}
+            disabled={running || starting}
             className="gap-1.5 bg-brand-strong text-brand-foreground hover:bg-brand-strong/90"
           >
             {running ? (
@@ -488,9 +503,9 @@ export function PipelineScreen({
         </div>
       </div>
 
-      {error && (
+      {(startError ?? error) && (
         <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
+          <AlertDescription>{startError ?? error}</AlertDescription>
         </Alert>
       )}
 
