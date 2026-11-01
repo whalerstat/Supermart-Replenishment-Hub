@@ -47,11 +47,10 @@ export default function App() {
     window.scrollTo({ top: 0 });
   }
 
-  function resetDemo() {
-    if (!window.confirm('Reset the demo? This re-seeds the sources, re-runs the pipeline and clears all decisions.'))
-      return;
+  function reset() {
+    if (!window.confirm('Reset the app? This re-seeds the sources and clears all runs and decisions.')) return;
     setResetError(null);
-    postJson('/api/demo/reset', {})
+    postJson('/api/reset', {})
       .then(() => {
         setEpoch((e) => e + 1);
         go('pipeline');
@@ -92,9 +91,9 @@ export default function App() {
                 size="icon"
                 variant="ghost"
                 className="size-11 md:size-8"
-                aria-label="Reset demo"
-                title="Reset demo"
-                onClick={resetDemo}
+                aria-label="Reset"
+                title="Reset"
+                onClick={reset}
               >
                 <RefreshCw aria-hidden className="size-4" />
               </Button>
@@ -136,7 +135,7 @@ export default function App() {
             <PipelineScreen key={epoch} config={c} onOpenDecisions={() => go('decisions')} />
           </TabsContent>
           <TabsContent value="decisions" forceMount className="mt-0 data-[state=inactive]:hidden">
-            <DecisionsScreen key={epoch} config={c} visits={visits} onOpenPipeline={() => go('pipeline')} />
+            <DecisionsScreen key={epoch} visits={visits} onOpenPipeline={() => go('pipeline')} />
           </TabsContent>
         </main>
       </Tabs>

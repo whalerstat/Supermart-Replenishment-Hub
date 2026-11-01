@@ -83,6 +83,7 @@ export interface SeriesPoint {
   p90?: number;
   stock?: number;
   ly?: number;
+  stock_level?: number;
   driver?: number;
 }
 export interface Person {
@@ -132,6 +133,7 @@ export interface SignalPayload {
     driverLabel?: string;
     showStock?: boolean;
     showLy?: boolean;
+    showStockLevel?: boolean;
   };
   lines: { sku: string; name: string; a: string; b: string; c: string }[];
   lineHeads: [string, string, string];
@@ -186,6 +188,7 @@ export interface LogRow {
 }
 export interface Decisions {
   as_of: string;
+  ready: boolean;
   model: { version: number; metrics: ModelMetrics; trained_at: string } | null;
   model_service: string | null;
   signals: Signal[];
