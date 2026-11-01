@@ -1,21 +1,21 @@
-// server/app/scenario.ts — the fixed facts of the demo story (Harmoni Mart, a fictional Singapore grocer).
+// server/app/scenario.ts — the fixed facts of the demo story (Supermart, a fictional Singapore grocer).
 // The business date is pinned so every number on both screens is reproducible on any day.
 
-export const SCHEMA = 'replen_agent_hub';
+export const SCHEMA = 'supermart_replen';
 
 /** Business date of the demo: Monday 21 December 2026 (school-holiday travel peak, year-end fresh week). */
 export const AS_OF = '2026-12-21';
 
 /** Unity Catalog names shown on screen for the three medallion tables (the demo materialises them in Lakebase). */
 export const UC = {
-  catalog: 'harmoni',
-  bronze: 'harmoni.bronze.raw_events',
-  silver: 'harmoni.silver.store_sku_day',
-  gold: 'harmoni.gold.replenishment_position',
-  model: 'harmoni.ml.replenishment_forecast',
+  catalog: 'supermart',
+  bronze: 'supermart.bronze.raw_events',
+  silver: 'supermart.silver.store_sku_day',
+  gold: 'supermart.gold.replenishment_position',
+  model: 'supermart.ml.replenishment_forecast',
 } as const;
 
-export const PLANNING_INBOX = 'replenishment-planning@harmonimart.example';
+export const PLANNING_INBOX = 'replenishment-planning@supermart.example';
 
 /** Day-of-week demand shape used by the seed (the model learns its own from the data). */
 export function dowSql(d: string): string {

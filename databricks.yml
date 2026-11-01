@@ -1,5 +1,5 @@
 bundle:
-  name: replenishment-agent-hub
+  name: supermart-replenishment-hub
 
 variables:
   postgres_branch:
@@ -12,8 +12,8 @@ variables:
 resources:
   apps:
     app:
-      name: "replenishment-agent-hub"
-      description: "Replenishment & Availability Hub: governed pipeline + Agent Decisions (mock data)"
+      name: "supermart-replenishment-hub"
+      description: "Supermart Replenishment Hub: governed pipeline + Agent Decisions (mock data)"
       source_code_path: ./
       lifecycle:
         started: true          # deploy also starts the app
@@ -32,11 +32,11 @@ resources:
 targets:
   default:
     default: true
-    # workspace:
-    #   host: https://<your-workspace>.cloud.databricks.com   # or deploy with --profile <your-profile>
+    workspace:
+      profile: BenV
     variables:
       # Same Lakebase project and model service as exec-insight-console; this app uses its own schema
-      # (replen_agent_hub), owned by this app's service principal.
+      # (supermart_replen), owned by this app's service principal.
       postgres_branch: projects/retail-demos/branches/production
       postgres_database: projects/retail-demos/branches/production/databases/databricks-postgres
       model_service: workspace.ai_gateway.haiku55

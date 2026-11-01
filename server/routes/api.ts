@@ -32,8 +32,8 @@ export function registerRoutes(app: Application): void {
 
   app.get('/api/config', (_req, res) => {
     res.json({
-      title: 'Replenishment & Availability Hub',
-      subtitle: 'Harmoni Mart · fictional data',
+      title: 'Supermart Replenishment Hub',
+      subtitle: 'Supermart · fictional data',
       persona: 'replenishment planners',
       as_of: AS_OF,
       uc: UC,

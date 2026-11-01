@@ -229,9 +229,9 @@ async function silver(runId: number): Promise<Stats> {
     table: UC.silver,
     rows: core,
     related: [
-      { table: 'harmoni.silver.stock_position', rows: positions },
-      { table: 'harmoni.silver.travel_bookings', rows: bookings },
-      { table: 'harmoni.silver.store_orders', rows: orders },
+      { table: 'supermart.silver.stock_position', rows: positions },
+      { table: 'supermart.silver.travel_bookings', rows: bookings },
+      { table: 'supermart.silver.store_orders', rows: orders },
     ],
     expectations,
     quarantined: badSku + negative + future,
@@ -289,8 +289,8 @@ async function gold(): Promise<Stats> {
     table: UC.gold,
     rows: position,
     related: [
-      { table: 'harmoni.gold.store_travel_daily', rows: travel },
-      { table: 'harmoni.gold.knowledge_clauses', rows: clauses },
+      { table: 'supermart.gold.store_travel_daily', rows: travel },
+      { table: 'supermart.gold.knowledge_clauses', rows: clauses },
     ],
     grain: 'One row per store × SKU, as of the business date',
   };

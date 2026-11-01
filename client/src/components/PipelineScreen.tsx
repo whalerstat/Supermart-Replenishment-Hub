@@ -333,7 +333,7 @@ export function PipelineScreen({ config, onOpenDecisions }: { config: UiConfig; 
         <div className="min-w-0 flex-1">
           <h2 className="m-0 text-lg font-semibold leading-tight">Governed data foundation pipeline</h2>
           <p className="m-0 text-sm text-muted-foreground">
-            Lakeflow job <code className="text-xs">harmoni_replenishment_daily</code> · four sources into one governed
+            Lakeflow job <code className="text-xs">supermart_replenishment_daily</code> · four sources into one governed
             foundation, then the forecast, the dashboard and the agent
           </p>
         </div>

@@ -497,7 +497,7 @@ async function stockoutSignal(c: Ctx, storeId: string, category: string) {
     approval: `${money(valueA + freight)} is above the S$2,000 limit, so ${st.name} confirms it [OPS-2.4]`,
     facts: {
       ...situation,
-      order_type: 'Expedited purchase order, picked from the Harmoni Jurong DC',
+      order_type: 'Expedited purchase order, picked from the Supermart Jurong DC',
       supplier: 'NorthPeak Outdoor Apparel',
       arrives: label(etaA),
       order_value: money(valueA + freight),
@@ -923,7 +923,7 @@ export function checkDraft(rec: RecPayload, body: string): Check[] {
       !(body.includes(String(l.qty)) || body.includes(units(l.qty)))
   );
   const strangers = (body.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? []).filter(
-    (e) => !/harmonimart\.example$/i.test(e)
+    (e) => !/supermart\.example$/i.test(e)
   );
   const memberIds = body.match(/\bM-[A-Z]{3}-\d{3,}\b/g) ?? [];
   const cited = rec.clause_ids.filter((id) => body.includes(id));
@@ -1016,7 +1016,7 @@ function templateDraft(sig: SignalPayload, rec: RecPayload): { subject: string; 
   };
 }
 
-const SYSTEM = `You draft short operational e-mails for Harmoni Mart's replenishment planning team, sent to a store manager after a planner approves an AI recommendation.
+const SYSTEM = `You draft short operational e-mails for Supermart's replenishment planning team, sent to a store manager after a planner approves an AI recommendation.
 Rules:
 - Use only the facts provided. Never invent numbers, dates, people or products.
 - Plain, warm, direct English. No marketing tone. Under 200 words in the body.
@@ -1089,8 +1089,8 @@ export async function draftEmail(recId: string): Promise<Record<string, unknown>
     note,
     ms: Date.now() - t0,
     grounding: [
-      { label: 'Gold position', detail: `harmoni.gold.replenishment_position · ${r.signal.store.store}` },
-      { label: 'Forecast', detail: `harmoni.ml.replenishment_forecast v${r.signal.model_version}` },
+      { label: 'Gold position', detail: `supermart.gold.replenishment_position · ${r.signal.store.store}` },
+      { label: 'Forecast', detail: `supermart.ml.replenishment_forecast v${r.signal.model_version}` },
       { label: 'Customer insight', detail: r.signal.insight.source },
       ...clauses.map((c) => ({ label: s(c.clause_id), detail: `${s(c.doc_title)} ${s(c.clause_title)}` })),
     ],

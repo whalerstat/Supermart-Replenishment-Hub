@@ -1,5 +1,5 @@
 {
-  "name": "replenishment-agent-hub",
+  "name": "supermart-replenishment-hub",
   "version": "1.0.0",
   "main": "dist/server.js",
   "type": "module",
@@ -27,7 +27,7 @@
   "keywords": [],
   "author": "",
   "license": "Unlicensed",
-  "description": "Replenishment & Availability Hub: governed pipeline + Agent Decisions (mock data)",
+  "description": "Supermart Replenishment Hub: governed pipeline + Agent Decisions (mock data)",
   "dependencies": {
     "@databricks/appkit": "0.89.0",
     "@databricks/appkit-ui": "0.89.0",

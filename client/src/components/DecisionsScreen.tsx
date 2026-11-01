@@ -271,7 +271,7 @@ function CheckRow({ c }: { c: Check }) {
 /** Same rules as the server's checkDraft, re-run live while the planner edits. */
 function liveChecks(base: Check[], rec: RecPayload, body: string): Check[] {
   const strangers = (body.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? []).filter(
-    (e) => !/harmonimart\.example$/i.test(e)
+    (e) => !/supermart\.example$/i.test(e)
   );
   const members = body.match(/\bM-[A-Z]{3}-\d{3,}\b/g) ?? [];
   const missing = rec.lines.filter(

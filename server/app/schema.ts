@@ -133,12 +133,12 @@ const ye = yearEndSql;
 
 export const SEED = `
 INSERT INTO ${S}.src_lh_stores VALUES
-  ('CHG', 'Changi City',      'East',       'Daniel Tan',   'daniel.tan@harmonimart.example',   2200, 1.00),
-  ('TMP', 'Tampines Central', 'East',       'Siti Rahman',  'siti.rahman@harmonimart.example',  2600, 1.25),
-  ('JUR', 'Jurong East',      'West',       'Arun Pillai',  'arun.pillai@harmonimart.example',  3200, 1.15),
-  ('BIS', 'Bishan',           'Central',    'Grace Lim',    'grace.lim@harmonimart.example',    2400, 0.90),
-  ('WDL', 'Woodlands North',  'North',      'Marcus Ong',   'marcus.ong@harmonimart.example',   2600, 0.95),
-  ('PUN', 'Punggol',          'North-East', 'Koh Hui Min',  'huimin.koh@harmonimart.example',   2800, 1.05);
+  ('CHG', 'Changi City',      'East',       'Daniel Tan',   'daniel.tan@supermart.example',   2200, 1.00),
+  ('TMP', 'Tampines Central', 'East',       'Siti Rahman',  'siti.rahman@supermart.example',  2600, 1.25),
+  ('JUR', 'Jurong East',      'West',       'Arun Pillai',  'arun.pillai@supermart.example',  3200, 1.15),
+  ('BIS', 'Bishan',           'Central',    'Grace Lim',    'grace.lim@supermart.example',    2400, 0.90),
+  ('WDL', 'Woodlands North',  'North',      'Marcus Ong',   'marcus.ong@supermart.example',   2600, 0.95),
+  ('PUN', 'Punggol',          'North-East', 'Koh Hui Min',  'huimin.koh@supermart.example',   2800, 1.05);
 
 INSERT INTO ${S}.src_lh_products VALUES
   ('APP-101', 'Thermal down jacket',        'Winter apparel', 32.00, 79.90,  6, NULL, 'SUP-NPK', 0.50),
@@ -171,22 +171,22 @@ INSERT INTO ${S}.src_lh_dc_stock VALUES
 
 INSERT INTO ${S}.src_lh_documents VALUES
   ('NPK-4.2', 'NorthPeak supply agreement 2026', '§4.2 Expedited DC pick',
-   'Orders of two or more case packs per line can be picked from the Harmoni Jurong DC and delivered to store within 48 hours. Expedited freight is charged at 6% of the order cost.', 'Winter apparel'),
+   'Orders of two or more case packs per line can be picked from the Supermart Jurong DC and delivered to store within 48 hours. Expedited freight is charged at 6% of the order cost.', 'Winter apparel'),
   ('NPK-4.5', 'NorthPeak supply agreement 2026', '§4.5 Standard replenishment',
    'Standard orders are delivered in 5 days, in full case packs: jackets in packs of 6, all other lines in packs of 12.', 'Winter apparel'),
-  ('OPS-7.3', 'Harmoni store operations playbook', '§7.3 Inter-store transfers',
+  ('OPS-7.3', 'Supermart store operations playbook', '§7.3 Inter-store transfers',
    'Transfers between stores travel on the DC shuttle and arrive the next day. The donor store must keep at least 21 days of cover after the transfer. Handling is S$0.60 per unit plus S$120 per shuttle run.', 'All'),
-  ('OPS-2.4', 'Harmoni store operations playbook', '§2.4 Approval thresholds',
+  ('OPS-2.4', 'Supermart store operations playbook', '§2.4 Approval thresholds',
    'Any new or changed order above S$2,000, or a change of more than 30% to an order line, is confirmed by the store manager before it is placed.', 'All'),
   ('GRN-3.1', 'Greenleaf Fresh supply agreement 2026', '§3.1 Order amendments',
    'Purchase order quantities can be amended until 14:00 on the second business day before delivery. Public holidays are not business days.', 'Fresh'),
   ('GRN-3.4', 'Greenleaf Fresh supply agreement 2026', '§3.4 Split deliveries',
    'Orders above S$1,500 can be split across two delivery days at no extra charge with 24 hours'' notice.', 'Fresh'),
-  ('FRS-2.1', 'Harmoni fresh ordering policy', '§2.1 Order to forecast',
+  ('FRS-2.1', 'Supermart fresh ordering policy', '§2.1 Order to forecast',
    'Order fresh lines to forecast plus half a day of safety stock, and never more than the product can sell within its shelf life.', 'Fresh'),
   ('CDP-1.0', 'Customer data platform metric definitions', 'Cold-destination departures',
    'Loyalty members with a confirmed flight to Japan, Korea, northern China or Europe departing in the next 2 to 10 days. Member identities are hashed before analysis.', 'Winter apparel'),
-  ('PRM-1.2', 'Harmoni promotions calendar notes', 'Year-end Fresh Fest moved',
+  ('PRM-1.2', 'Supermart promotions calendar notes', 'Year-end Fresh Fest moved',
    'The Year-end Fresh Fest that ran from 26 December 2025 to 1 January 2026 moves to Lunar New Year in 2027. There is no fresh promotion in the 2026 year-end week.', 'Fresh');
 
 -- Travel bookings from the customer behaviour platform (generated once, then published as API messages).

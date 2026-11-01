@@ -1,6 +1,6 @@
-# Replenishment & Availability Hub — governed pipeline + Agent Decisions
+# Supermart Replenishment Hub — governed pipeline + Agent Decisions
 
-A two-screen Databricks App for the final-round "Build, Demo, Pitch!" story about Harmoni Mart, a fictional Singapore grocer.
+A two-screen Databricks App for the final-round "Build, Demo, Pitch!" story about Supermart, a fictional Singapore grocer.
 
 | Screen                           | What the panel sees                                                                                                                                                                                                                                                                                                                                                                                                 |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -30,7 +30,7 @@ A two-screen Databricks App for the final-round "Build, Demo, Pitch!" story abou
 ## Architecture
 
 - **AppKit** (`@databricks/appkit` 0.89) app: Express server + React (AppKit UI, Databricks brand theme from `exec-insight-console`, light/dark).
-- **Lakebase** (`retail-demos` project): schema `replen_agent_hub`, created by the app's service principal on first start.
+- **Lakebase** (`retail-demos` project): schema `supermart_replen`, created by the app's service principal on first start.
   - **Sources:** `src_pg_*` (managed Postgres), `src_lh_*` (lakehouse), `src_api_stock` and `src_api_customer` (raw JSON messages).
   - **Medallion:** `bronze_raw_events` → `silver_*` → `gold_*`.
   - **Model:** `ml_model_registry`, `ml_forecast`, `ml_backtest`.
@@ -42,21 +42,21 @@ A two-screen Databricks App for the final-round "Build, Demo, Pitch!" story abou
 
 ```bash
 databricks auth login --host https://<your-workspace>.cloud.databricks.com   # once
-cd replenishment-agent-hub
+cd supermart-replenishment-hub
 databricks bundle validate
 databricks bundle deploy          # creates the app with the postgres + model resources; lifecycle.started starts it
 databricks bundle run app         # (re)deploys the source and starts the app
-databricks apps get replenishment-agent-hub   # URL and status
+databricks apps get supermart-replenishment-hub   # URL and status
 ```
 
-- **First start:** the app creates `replen_agent_hub`, seeds the sources and runs the pipeline once, so Screen 2 has data. This takes a few seconds; see `/logz` if anything fails.
+- **First start:** the app creates `supermart_replen`, seeds the sources and runs the pipeline once, so Screen 2 has data. This takes a few seconds; see `/logz` if anything fails.
 - **Same Lakebase project and model service as exec-insight-console:** both are bound in `databricks.yml`. If the model service has another name, change `model_service` there.
 - **Optional:** set `DASHBOARD_URL` in `app.yaml` to make "Open in Databricks" on the dashboard node open a real AI/BI dashboard.
 - **Reset before the interview:** the ↻ button in the header re-seeds the data, re-runs the pipeline and clears decisions.
 
 ## Running the demo (about 12 minutes of the 30-minute block)
 
-1. **Screen 1, empty (1 min).** Say: "This is Harmoni's foundation before anything has run. The four systems you told me about are on the left." Name them: store POS and ordering on managed Postgres, ERP and history in the lakehouse, and two SaaS APIs. Then press **Run job**.
+1. **Screen 1, empty (1 min).** Say: "This is Supermart's foundation before anything has run. The four systems you told me about are on the left." Name them: store POS and ordering on managed Postgres, ERP and history in the lakehouse, and two SaaS APIs. Then press **Run job**.
 2. **While it runs (3 min).**
    - **Bronze:** "Everything lands raw, tagged with where it came from."
    - **Silver:** "This is where trust is earned." Point at the expectations: the replayed POS batch, the negative stock counts, and member e-mails dropped and IDs hashed.
