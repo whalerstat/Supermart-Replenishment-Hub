@@ -2,7 +2,7 @@
 // The medallion (bronze → silver → gold), the forecast and the agent's signals start empty: the
 // pipeline on Screen 1 builds them from the sources (server/app/pipeline.ts).
 import { commonDdl } from '../lib/common';
-import { AS_OF, SCHEMA, dowSql, noiseSql, yearEndSql } from './scenario';
+import { AS_OF, SCHEMA, dowSql, noiseSql } from './scenario';
 
 export { SCHEMA };
 const S = SCHEMA;
@@ -129,7 +129,9 @@ ${commonDdl(S)}
 `;
 
 const dow = dowSql;
-const ye = yearEndSql;
+
+/** Stamped on the schema by the seed; a deployed schema with another tag is re-seeded on start. */
+export const SEED_TAG = `seed ${AS_OF} v2`;
 
 export const SEED = `
 INSERT INTO ${S}.src_lh_stores VALUES
@@ -162,7 +164,7 @@ INSERT INTO ${S}.src_lh_suppliers VALUES
   ('SUP-AMB', 'Golden Grain Trading',      6, 'orders@goldengrain.example');
 
 INSERT INTO ${S}.src_lh_promotions VALUES
-  ('PRM-2512-FF', 'Year-end Fresh Fest',       'Fresh', '2025-12-26', '2026-01-01', 45.0, 'completed'),
+  ('PRM-2512-FF', 'Mid-December Fresh Fest',   'Fresh', '2025-12-12', '2025-12-18', 45.0, 'completed'),
   ('PRM-2702-FF', 'Lunar New Year Fresh Fest', 'Fresh', '2027-02-10', '2027-02-16', 40.0, 'planned');
 
 INSERT INTO ${S}.src_lh_dc_stock VALUES
@@ -186,8 +188,8 @@ INSERT INTO ${S}.src_lh_documents VALUES
    'Order fresh lines to forecast plus half a day of safety stock, and never more than the product can sell within its shelf life.', 'Fresh'),
   ('CDP-1.0', 'Customer data platform metric definitions', 'Cold-destination departures',
    'Loyalty members with a confirmed flight to Japan, Korea, northern China or Europe departing in the next 2 to 10 days. Member identities are hashed before analysis.', 'Winter apparel'),
-  ('PRM-1.2', 'Supermart promotions calendar notes', 'Year-end Fresh Fest moved',
-   'The Year-end Fresh Fest that ran from 26 December 2025 to 1 January 2026 moves to Lunar New Year in 2027. There is no fresh promotion in the 2026 year-end week.', 'Fresh');
+  ('PRM-1.2', 'Supermart promotions calendar notes', 'Mid-December Fresh Fest moved',
+   'The Mid-December Fresh Fest that ran from 12 to 18 December 2025 moves to Lunar New Year in 2027. There is no fresh promotion in mid-December 2026.', 'Fresh');
 
 -- Travel bookings from the customer behaviour platform (generated once, then published as API messages).
 CREATE TABLE ${S}._seed_bookings AS
@@ -203,15 +205,15 @@ u AS (
 ),
 d AS (
   SELECT store_id, i, u3, u4, u5,
-         CASE WHEN u1 < 0.15 THEN date '2026-10-20' + floor(u2 * 32)::int
-              WHEN u1 < 0.45 THEN date '2026-11-21' + floor(u2 * 28)::int
-              WHEN u1 < 0.90 THEN date '2026-12-21' + floor(u2 * 12)::int
-              ELSE date '2027-01-02' + floor(u2 * 9)::int END AS depart_date
+         CASE WHEN u1 < 0.15 THEN date '2026-10-06' + floor(u2 * 32)::int
+              WHEN u1 < 0.45 THEN date '2026-11-07' + floor(u2 * 28)::int
+              WHEN u1 < 0.90 THEN date '2026-12-07' + floor(u2 * 12)::int
+              ELSE date '2026-12-19' + floor(u2 * 9)::int END AS depart_date
   FROM u
 )
 SELECT store_id, i, depart_date,
        depart_date + 4 + floor(u4 * 10)::int AS return_date,
-       u3 < (CASE WHEN depart_date >= date '2026-12-01' THEN 0.70 ELSE 0.40 END) AS cold,
+       u3 < (CASE WHEN depart_date >= date '2026-11-17' THEN 0.70 ELSE 0.40 END) AS cold,
        (ARRAY['Tokyo, Japan', 'Tokyo, Japan', 'Seoul, South Korea', 'Seoul, South Korea', 'Sapporo, Japan', 'Osaka, Japan', 'London, UK', 'Zurich, Switzerland'])[1 + floor(u4 * 8)::int] AS cold_dest,
        (ARRAY['Bangkok, Thailand', 'Bali, Indonesia', 'Perth, Australia', 'Phuket, Thailand', 'Kuala Lumpur, Malaysia'])[1 + floor(u4 * 5)::int] AS warm_dest,
        (depart_date - (7 + floor(u5 * 50)::int))::timestamp + make_interval(mins => floor(u4 * 1300)::int) AS booked_at
@@ -225,9 +227,9 @@ SELECT st.store_id, g::date AS d, st.households,
           AND b.depart_date BETWEEN g::date + 2 AND g::date + 10) AS dep10_all,
        (SELECT count(*) FROM ${S}._seed_bookings b WHERE b.store_id = st.store_id
           AND b.depart_date <= g::date AND b.return_date > g::date) AS away
-FROM ${S}.src_lh_stores st, generate_series(date '2026-10-26', date '2027-01-03', interval '1 day') g;
+FROM ${S}.src_lh_stores st, generate_series(date '2026-10-12', date '2026-12-20', interval '1 day') g;
 
--- This year's POS sales (26 Oct – 20 Dec 2026), driven by travel bookings, the week shape and year-end.
+-- This year's POS sales (12 Oct – 6 Dec 2026), driven by travel bookings and the week shape.
 INSERT INTO ${S}.src_pg_pos_sales (sale_date, store_id, sku, units, net_sales, loaded_at)
 SELECT t.d, st.store_id, p.sku, x.units, round(x.units * p.unit_price * 0.97, 2), t.d + time '23:30'
 FROM ${S}._seed_travel t
@@ -238,7 +240,7 @@ CROSS JOIN LATERAL (
     CASE p.category
       WHEN 'Winter apparel' THEN p.base_units * (0.8 * st.scale + 0.04 * t.dep10_cold)
       WHEN 'Travel'         THEN p.base_units * (0.8 * st.scale + 0.03 * t.dep10_all)
-      WHEN 'Fresh'          THEN p.base_units * st.scale * ${ye('t.d')} * (1 - 1.5 * t.away::numeric / st.households)
+      WHEN 'Fresh'          THEN p.base_units * st.scale * (1 - 1.5 * t.away::numeric / st.households)
       ELSE p.base_units * st.scale END
     * ${dow('t.d')} * ${noiseSql(`st.store_id || p.sku || t.d::text`, 0.7, 0.6)}
     * ${noiseSql(`'wk' || st.store_id || p.sku || date_trunc('week', t.d)::date::text`, 0.88, 0.24)}))::int AS units
@@ -250,7 +252,7 @@ INSERT INTO ${S}.src_pg_pos_sales (sale_date, store_id, sku, units, net_sales, l
 SELECT sale_date, store_id, sku, units, net_sales, loaded_at + interval '2 hours'
 FROM ${S}.src_pg_pos_sales WHERE sale_date = date '${AS_OF}' - 1 AND store_id IN ('CHG', 'TMP');
 
--- Last year's sales from the lakehouse (27 Oct 2025 – 4 Jan 2026): less travel, and the Fresh Fest promotion.
+-- Last year's sales from the lakehouse (13 Oct – 21 Dec 2025): less travel, and the Fresh Fest promotion.
 INSERT INTO ${S}.src_lh_sales_history (sale_date, store_id, sku, units, net_sales)
 SELECT t.d - 364, st.store_id, p.sku, x.units, round(x.units * p.unit_price * 0.97, 2)
 FROM ${S}._seed_travel t
@@ -261,8 +263,8 @@ CROSS JOIN LATERAL (
     CASE p.category
       WHEN 'Winter apparel' THEN p.base_units * (0.8 * st.scale + 0.04 * 0.7 * t.dep10_cold)
       WHEN 'Travel'         THEN p.base_units * (0.8 * st.scale + 0.03 * 0.7 * t.dep10_all)
-      WHEN 'Fresh'          THEN p.base_units * st.scale * 0.97 * ${ye('(t.d - 364)')}
-                                 * (CASE WHEN t.d - 364 BETWEEN date '2025-12-26' AND date '2026-01-01' THEN 1.45 ELSE 1 END)
+      WHEN 'Fresh'          THEN p.base_units * st.scale * 0.97
+                                 * (CASE WHEN t.d - 364 BETWEEN date '2025-12-12' AND date '2025-12-18' THEN 1.45 ELSE 1 END)
                                  * (1 - 1.5 * 0.7 * t.away::numeric / st.households)
       ELSE p.base_units * st.scale * 0.97 END
     * ${dow('(t.d - 364)')} * ${noiseSql(`'ly' || st.store_id || p.sku || t.d::text`, 0.7, 0.6)}
@@ -270,7 +272,7 @@ CROSS JOIN LATERAL (
 ) x;
 
 -- Store purchase orders (store ordering app on Lakebase).
--- Greenleaf year-end orders for delivery Mon 28 Dec, covering 28–31 Dec. Tampines copied last year (+3%).
+-- Greenleaf orders for delivery Mon 14 Dec, covering 14–17 Dec. Tampines copied last year (+3%).
 INSERT INTO ${S}.src_pg_store_orders
 SELECT CASE st.store_id WHEN 'TMP' THEN 'PO-7731' ELSE 'PO-77' || (40 + row_number() OVER (PARTITION BY p.sku ORDER BY st.store_id))::text END,
        row_number() OVER (PARTITION BY st.store_id ORDER BY p.sku)::int,
@@ -278,11 +280,11 @@ SELECT CASE st.store_id WHEN 'TMP' THEN 'PO-7731' ELSE 'PO-77' || (40 + row_numb
        CASE WHEN st.store_id = 'TMP'
             THEN (ceil((SELECT sum(h.units) FROM ${S}.src_lh_sales_history h
                         WHERE h.store_id = st.store_id AND h.sku = p.sku
-                          AND h.sale_date BETWEEN date '2025-12-29' AND date '2026-01-01') * 1.03 / p.case_pack) * p.case_pack)::int
+                          AND h.sale_date BETWEEN date '2025-12-15' AND date '2025-12-18') * 1.03 / p.case_pack) * p.case_pack)::int
             ELSE (ceil(p.base_units * st.scale * 4 * 0.96 / p.case_pack) * p.case_pack)::int END,
-       date '2026-12-28', 'submitted',
-       CASE WHEN st.store_id = 'TMP' THEN 'Copied from last year''s 29 Dec – 1 Jan order, +3% trend' ELSE 'Planner forecast' END,
-       st.manager_name, CASE WHEN st.store_id = 'TMP' THEN timestamptz '2026-12-19 16:42+08' ELSE timestamptz '2026-12-18 10:05+08' END
+       date '2026-12-14', 'submitted',
+       CASE WHEN st.store_id = 'TMP' THEN 'Copied from last year''s 15–18 Dec order, +3% trend' ELSE 'Planner forecast' END,
+       st.manager_name, CASE WHEN st.store_id = 'TMP' THEN timestamptz '2026-12-05 16:42+08' ELSE timestamptz '2026-12-04 10:05+08' END
 FROM ${S}.src_lh_stores st CROSS JOIN ${S}.src_lh_products p
 WHERE p.supplier_id = 'SUP-GRN';
 
@@ -295,8 +297,8 @@ SELECT 'PO-' || CASE st.store_id WHEN 'CHG' THEN '7716' WHEN 'TMP' THEN '7712' W
          WHEN 'TMP' THEN CASE p.sku WHEN 'APP-101' THEN 72 WHEN 'APP-102' THEN 156 WHEN 'APP-103' THEN 108 ELSE 72 END
          WHEN 'PUN' THEN CASE p.sku WHEN 'APP-101' THEN 36 WHEN 'APP-102' THEN 72 WHEN 'APP-103' THEN 48 ELSE 36 END
          ELSE CASE p.sku WHEN 'APP-101' THEN 12 ELSE 24 END END,
-       CASE st.store_id WHEN 'CHG' THEN date '2026-12-28' WHEN 'TMP' THEN date '2026-12-22' WHEN 'PUN' THEN date '2026-12-22' ELSE date '2027-01-05' END,
-       'confirmed', 'Season plan', st.manager_name, timestamptz '2026-12-14 09:20+08'
+       CASE st.store_id WHEN 'CHG' THEN date '2026-12-14' WHEN 'TMP' THEN date '2026-12-08' WHEN 'PUN' THEN date '2026-12-08' ELSE date '2026-12-22' END,
+       'confirmed', 'Season plan', st.manager_name, timestamptz '2026-11-30 09:20+08'
 FROM ${S}.src_lh_stores st CROSS JOIN ${S}.src_lh_products p
 WHERE p.supplier_id = 'SUP-NPK';
 
@@ -352,10 +354,22 @@ ORDER BY b.booked_at;
 
 -- Two messages stamped in the future (device clock skew) that silver must quarantine.
 INSERT INTO ${S}.src_api_customer (received_at, payload) VALUES
-  (timestamptz '${AS_OF} 05:58+08', '{"event_id": "evt_CHG_X0001", "event_type": "flight_booking", "member_id": "M-CHG-X0001", "member_email": "skew1@mail.example", "home_store": "CHG", "destination": "Tokyo, Japan", "climate": "cold", "depart_date": "2026-12-26", "return_date": "2027-01-03", "booked_at": "2027-03-01T09:00:00+08:00"}'),
-  (timestamptz '${AS_OF} 05:59+08', '{"event_id": "evt_TMP_X0002", "event_type": "flight_booking", "member_id": "M-TMP-X0002", "member_email": "skew2@mail.example", "home_store": "TMP", "destination": "Seoul, South Korea", "climate": "cold", "depart_date": "2026-12-27", "return_date": "2027-01-04", "booked_at": "2027-02-11T10:00:00+08:00"}');
+  (timestamptz '${AS_OF} 05:58+08', '{"event_id": "evt_CHG_X0001", "event_type": "flight_booking", "member_id": "M-CHG-X0001", "member_email": "skew1@mail.example", "home_store": "CHG", "destination": "Tokyo, Japan", "climate": "cold", "depart_date": "2026-12-12", "return_date": "2026-12-20", "booked_at": "2027-02-15T09:00:00+08:00"}'),
+  (timestamptz '${AS_OF} 05:59+08', '{"event_id": "evt_TMP_X0002", "event_type": "flight_booking", "member_id": "M-TMP-X0002", "member_email": "skew2@mail.example", "home_store": "TMP", "destination": "Seoul, South Korea", "climate": "cold", "depart_date": "2026-12-13", "return_date": "2026-12-21", "booked_at": "2027-01-28T10:00:00+08:00"}');
 
 DROP TABLE ${S}._seed_onhand;
 DROP TABLE ${S}._seed_travel;
 DROP TABLE ${S}._seed_bookings;
+
+-- Run history: the scheduled 05:00 runs of the five days before the business date. They carry no task
+-- stats (the foundation is rebuilt by the first run started from the app), so 'seeded' keeps them out
+-- of the latest-run view.
+INSERT INTO ${S}.pipeline_runs (started_at, finished_at, status, triggered_by, stats) VALUES
+  (timestamptz '2026-12-02 05:00+08', timestamptz '2026-12-02 05:17+08', 'succeeded', 'schedule', '{"seeded": true, "duration_min": 17, "rows_ingested": 14102}'),
+  (timestamptz '2026-12-03 05:00+08', timestamptz '2026-12-03 05:18+08', 'succeeded', 'schedule', '{"seeded": true, "duration_min": 18, "rows_ingested": 14168}'),
+  (timestamptz '2026-12-04 05:00+08', timestamptz '2026-12-04 05:16+08', 'succeeded', 'schedule', '{"seeded": true, "duration_min": 16, "rows_ingested": 14221}'),
+  (timestamptz '2026-12-05 05:00+08', timestamptz '2026-12-05 05:19+08', 'succeeded', 'schedule', '{"seeded": true, "duration_min": 19, "rows_ingested": 14279}'),
+  (timestamptz '2026-12-06 05:00+08', timestamptz '2026-12-06 05:17+08', 'succeeded', 'schedule', '{"seeded": true, "duration_min": 17, "rows_ingested": 14334}');
+
+COMMENT ON SCHEMA ${S} IS '${SEED_TAG}';
 `;

@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // scripts/build-genie-space.mjs — builds the Genie serialized_space payload from genie/space.json and
-// creates the space, or updates it when one with the same title exists. No dependencies.
+// creates the space, or updates it (the one GENIE_SPACE_ID names, else the one with the same title). No dependencies.
 //   node scripts/build-genie-space.mjs              create or update, print the space id
 //   node scripts/build-genie-space.mjs --dry-run    print the payload only, never call Databricks
-// Env: DATABRICKS_CONFIG_PROFILE (default BenV), CATALOG (default retail_lakebase), WAREHOUSE_ID.
+// Env: DATABRICKS_CONFIG_PROFILE (default BenV), CATALOG (default retail_lakebase), WAREHOUSE_ID,
+//      GENIE_SPACE_ID (update this space; needed when the title in genie/space.json changed).
 // The Genie API rejects: ids that are not 32-hex, id-keyed arrays that are not sorted by id, tables not
 // sorted by identifier, column_configs not sorted by column_name, string (not array) question/sql/content,
 // and more than one text_instructions item. The builder below enforces all of them.
@@ -98,7 +99,7 @@ function findSpaceId() {
   return null;
 }
 
-const existing = findSpaceId();
+const existing = process.env.GENIE_SPACE_ID?.trim() || findSpaceId();
 const space = existing
   ? databricks(
       'genie',

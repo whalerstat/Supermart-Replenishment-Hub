@@ -1,13 +1,13 @@
 // server/app/agent.ts — the Replenishment agent. Two jobs:
 //   publish()  (last pipeline task): read gold + the forecast, raise the two signals, cost two
-//              corrective options for each, and refresh the insights tiles.
-//   decisions  (Screen 2): list signals, draft the store-manager e-mail for a chosen option (Claude
-//              via the AI Gateway, grounded on gold facts and agreement clauses; template fallback),
-//              and on human approval queue the e-mail, write the order back to store ordering
-//              (Lakebase) and log the decision.
+//              corrective options for each, and summarise the availability and fresh-waste risk.
+//   decisions  (Screen 2): list signals, draft the store-manager e-mail for a chosen option (a
+//              deterministic template on gold facts and agreement clauses; Claude only rewrites it
+//              when the planner asks the copilot), and on human approval queue the e-mail, write the
+//              order back to store ordering (Lakebase) and log the decision.
 import { logDecision, queueMessage } from '../lib/common';
 import { sql } from '../lib/db';
-import { complete, modelService } from '../lib/llm';
+import { modelService } from '../lib/llm';
 import { addDays, label, range, short, toDay } from './dates';
 import { AS_OF, PLANNING_INBOX, SCHEMA as S } from './scenario';
 
@@ -19,7 +19,8 @@ export interface SeriesPoint {
   p10?: number;
   p90?: number;
   stock?: number;
-  ly?: number;
+  /** Signal 2: units in stock before the order lands (units sold + STOCK_BUFFER_PCT). */
+  stock_level?: number;
   driver?: number;
 }
 interface Person {
@@ -75,7 +76,7 @@ export interface SignalPayload {
     window?: { from: string; to: string; label: string; perDay?: number };
     driverLabel?: string;
     showStock?: boolean;
-    showLy?: boolean;
+    showStockLevel?: boolean;
   };
   lines: { sku: string; name: string; a: string; b: string; c: string }[];
   lineHeads: [string, string, string];
@@ -90,6 +91,20 @@ export const money = (v: number) => `S$${Math.round(v).toLocaleString('en-US')}`
 const units = (v: number) => Math.round(v).toLocaleString('en-US');
 const plural = (name: string) => (name.endsWith('s') ? name : `${name}s`);
 const ceilTo = (v: number, pack: number) => Math.ceil(Math.max(0, v) / pack) * pack;
+/** Days of forecast every signal and option looks ahead. */
+const HORIZON = 14;
+/** Stores hold 15% more than they sell on a regular day: shelf fill plus the backroom. */
+export const STOCK_BUFFER_PCT = 15;
+
+/** Adds stock_level (units sold, or the forecast for days to come, plus the buffer) to each day before `until`. */
+export function withStockLevel(series: SeriesPoint[], until: string): SeriesPoint[] {
+  return series.map((p) => {
+    const sold = p.actual ?? p.forecast;
+    // Integer percent keeps x.5 cases exact (90 × 1.15 is 103.4999… in floating point).
+    const level = sold === undefined ? undefined : Math.round((sold * (100 + STOCK_BUFFER_PCT)) / 100);
+    return p.date < until && level !== undefined ? { ...p, stock_level: level } : p;
+  });
+}
 /** "28–31 Dec" */
 function span(a: string, b: string): string {
   return a.slice(0, 7) === b.slice(0, 7) ? `${+a.slice(8, 10)}–${short(b)}` : `${short(a)} – ${short(b)}`;
@@ -220,12 +235,12 @@ function simulate(c: Ctx, p: Pos, days: string[], extra: Map<string, number> = n
 // ── publish: signals, options and insight tiles ───────────────────────────────────────────────
 export async function publish(runId: number): Promise<Record<string, unknown>> {
   const c = await loadCtx(runId);
-  const week = range(AS_OF, addDays(AS_OF, 6));
+  const ahead = range(AS_OF, addDays(AS_OF, HORIZON - 1));
 
-  // Availability scan: every non-fresh store × SKU over the next 7 days.
+  // Availability scan: every non-fresh store × SKU over the next 14 days.
   const risks = c.pos
     .filter((p) => p.category !== 'Fresh')
-    .map((p) => ({ p, ...simulate(c, p, week) }))
+    .map((p) => ({ p, ...simulate(c, p, ahead) }))
     .filter((r) => r.lost >= 1);
   const groups = new Map<string, { store: string; category: string; lostSales: number }>();
   for (const r of risks) {
@@ -270,7 +285,7 @@ export async function publish(runId: number): Promise<Record<string, unknown>> {
   const dashboard = {
     projected_in_stock: +(100 * (1 - risks.length / Math.max(nonFresh, 1))).toFixed(1),
     at_risk: risks.length,
-    lost_sales_7d: Math.round(risks.reduce((a, r) => a + r.lost * r.p.unit_price, 0)),
+    lost_sales_14d: Math.round(risks.reduce((a, r) => a + r.lost * r.p.unit_price, 0)),
     fresh_waste_risk: Math.round(poScan.reduce((a, p) => a + p.wasteValue, 0)),
     open_fresh_orders: poScan.length,
     stores,
@@ -319,15 +334,17 @@ async function stockoutSignal(c: Ctx, storeId: string, category: string) {
     .filter((o) => s(o.store_id) === storeId && lines.some((l) => l.sku === s(o.sku)))
     .map((o) => ({ d: s(o.d), po: s(o.po_id) }))
     .sort((a, b) => a.d.localeCompare(b.d))[0];
-  const coverTo = nextStd ? addDays(nextStd.d, -1) : addDays(AS_OF, 6);
+  const coverTo = nextStd ? addDays(nextStd.d, -1) : addDays(AS_OF, HORIZON - 1);
   const horizon = range(AS_OF, coverTo);
-  const week = range(AS_OF, addDays(AS_OF, 6));
+  const ahead = range(AS_OF, addDays(AS_OF, HORIZON - 1));
   const base = new Map(lines.map((p) => [p.sku, simulate(c, p, horizon)]));
-  const lostBase = lines.reduce((a, p) => a + base.get(p.sku)!.lost, 0);
-  const lostSalesBase = lines.reduce((a, p) => a + base.get(p.sku)!.lost * p.unit_price, 0);
+  // Sales at risk and the options' benefit are counted over the full 14 days, deliveries included.
+  const base14 = new Map(lines.map((p) => [p.sku, simulate(c, p, ahead)]));
+  const lostBase = lines.reduce((a, p) => a + base14.get(p.sku)!.lost, 0);
+  const lostSalesBase = lines.reduce((a, p) => a + base14.get(p.sku)!.lost * p.unit_price, 0);
   const onHand = lines.reduce((a, p) => a + p.on_hand, 0);
-  const f7 = (key: 'f' | 'p10' | 'p90') =>
-    lines.reduce((a, p) => a + week.reduce((b, d) => b + F(c, storeId, p.sku, d)[key], 0), 0);
+  const f14 = (key: 'f' | 'p10' | 'p90') =>
+    lines.reduce((a, p) => a + ahead.reduce((b, d) => b + F(c, storeId, p.sku, d)[key], 0), 0);
   const outs = lines.map((p) => ({ p, out: base.get(p.sku)!.firstOut })).filter((x) => x.out) as {
     p: Pos;
     out: string;
@@ -354,7 +371,7 @@ async function stockoutSignal(c: Ctx, storeId: string, category: string) {
 
   // Chart: 4 weeks of actuals, 2 weeks of forecast, projected stock with no action, departures.
   const chartDays = range(addDays(AS_OF, -28), addDays(AS_OF, 13));
-  const fullPath = new Map(lines.map((p) => [p.sku, simulate(c, p, range(AS_OF, addDays(AS_OF, 13))).path]));
+  const fullPath = new Map(lines.map((p) => [p.sku, base14.get(p.sku)!.path]));
   const series: SeriesPoint[] = chartDays.map((d) => {
     const pt: SeriesPoint = { date: d, driver: tv(d).cold };
     if (d < AS_OF) pt.actual = lines.reduce((a, p) => a + (c.hist.get(k3(storeId, p.sku, d)) ?? 0), 0);
@@ -377,15 +394,15 @@ async function stockoutSignal(c: Ctx, storeId: string, category: string) {
     category,
     store: person,
     title: `${category} will run out at ${st.store} before the travel peak`,
-    summary: `${firstOut ? `${plural(firstOut.p.product_name)} run out on ${label(firstOut.out)}` : 'Lines run short'}; ${outs.length} of ${lines.length} lines are gone before ${nextStd ? `the next delivery on ${label(nextStd.d)}` : 'next week'}.`,
+    summary: `${firstOut ? `${plural(firstOut.p.product_name)} run out on ${label(firstOut.out)}` : 'Lines run short'}; ${outs.length} of ${lines.length} lines are gone before ${nextStd ? `the next delivery on ${label(nextStd.d)}` : 'the next 14 days are out'}.`,
     headline: [
-      { label: 'Sales at risk, next 7 days', value: money(lostSalesBase), tone: 'bad' },
+      { label: 'Sales at risk, next 14 days', value: money(lostSalesBase), tone: 'bad' },
       { label: 'First line out', value: firstOut ? label(firstOut.out) : '—', tone: 'bad' },
-      { label: 'On hand vs 7-day forecast', value: `${units(onHand)} vs ${units(f7('f'))}`, tone: 'warn' },
+      { label: 'On hand vs 14-day forecast', value: `${units(onHand)} vs ${units(f14('f'))}`, tone: 'warn' },
     ],
     insight: {
       title: 'Customers buy winter wear for their trips',
-      text: `${units(coldNow)} loyalty members who shop at ${st.store} fly to cold destinations in the next 10 days, mostly ${cityText}. That is ${ratio >= 10 ? ratio.toFixed(0) : ratio.toFixed(1)}× early November, and winter apparel sales here have tracked those departures since the school holidays began.`,
+      text: `${units(coldNow)} loyalty members who shop at ${st.store} fly to cold destinations in the next 10 days, mostly ${cityText}. That is ${ratio >= 10 ? ratio.toFixed(0) : ratio.toFixed(1)}× mid-October, and winter apparel sales here have tracked those departures since the school holidays began.`,
       source: 'Customer behaviour API → silver.travel_bookings → gold.store_travel_daily',
     },
     drivers: [
@@ -397,11 +414,11 @@ async function stockoutSignal(c: Ctx, storeId: string, category: string) {
         source: 'Managed Postgres · store orders',
         text: nextStd
           ? `Next NorthPeak delivery ${nextStd.po} lands ${label(nextStd.d)}, after the peak departure days.`
-          : 'No delivery booked this week.',
+          : 'No delivery booked in the next 14 days.',
       },
       {
         source: `Forecast model v${c.version}`,
-        text: `${units(f7('f'))} units over the next 7 days (P10–P90: ${units(f7('p10'))}–${units(f7('p90'))}).`,
+        text: `${units(f14('f'))} units over the next 14 days (P10–P90: ${units(f14('p10'))}–${units(f14('p90'))}).`,
       },
       {
         source: 'Lakehouse · sales history',
@@ -419,10 +436,10 @@ async function stockoutSignal(c: Ctx, storeId: string, category: string) {
       sku: p.sku,
       name: p.product_name,
       a: units(p.on_hand),
-      b: units(week.reduce((a, d) => a + F(c, storeId, p.sku, d).f, 0)),
+      b: units(ahead.reduce((a, d) => a + F(c, storeId, p.sku, d).f, 0)),
       c: base.get(p.sku)!.firstOut ? label(base.get(p.sku)!.firstOut!) : 'Covered',
     })),
-    lineHeads: ['On hand', 'Forecast 7 days', 'Runs out'],
+    lineHeads: ['On hand', 'Forecast 14 days', 'Runs out'],
     model_version: c.version,
   };
 
@@ -459,8 +476,8 @@ async function stockoutSignal(c: Ctx, storeId: string, category: string) {
     let lostSales = 0;
     let margin = 0;
     for (const p of lines) {
-      const r = simulate(c, p, horizon, extra.get(p.sku));
-      const saved = base.get(p.sku)!.lost - r.lost;
+      const r = simulate(c, p, ahead, extra.get(p.sku));
+      const saved = base14.get(p.sku)!.lost - r.lost;
       lostUnits += r.lost;
       lostSales += saved * p.unit_price;
       margin += saved * (p.unit_price - p.unit_cost);
@@ -490,7 +507,7 @@ async function stockoutSignal(c: Ctx, storeId: string, category: string) {
       `${label(addDays(AS_OF, 1))} is still short until the order lands on ${label(etaA)}.`,
       'Uses DC stock planned for January replenishment; NorthPeak refills the DC in 5 days.',
     ],
-    confidence: `Covers the forecast plus 2 days of safety stock; P90 demand is ${units(f7('p90'))} units over 7 days.`,
+    confidence: `Covers the forecast to the next delivery plus 2 days of safety stock; P90 demand is ${units(f14('p90'))} units over 14 days.`,
     clause_ids: ['NPK-4.2', 'OPS-2.4', 'CDP-1.0'],
     recipient: person,
     terms: 'Full case packs, at least two packs per line, 48-hour DC pick [NPK-4.2]',
@@ -502,7 +519,7 @@ async function stockoutSignal(c: Ctx, storeId: string, category: string) {
       arrives: label(etaA),
       order_value: money(valueA + freight),
       freight: money(freight),
-      sales_protected_7d: money(evA.salesProtected),
+      sales_protected_14d: money(evA.salesProtected),
     },
     score: evA.marginProtected - freight,
   };
@@ -518,10 +535,7 @@ async function stockoutSignal(c: Ctx, storeId: string, category: string) {
       .filter((q) => q.sku === p.sku && q.store_id !== storeId)
       .map((q) => {
         // Donors keep 21 days of cover at whichever is higher: their recent sales or their forecast.
-        const rate = Math.max(
-          q.avg7,
-          range(AS_OF, addDays(AS_OF, 13)).reduce((a, d) => a + F(c, q.store_id, q.sku, d).f, 0) / 14
-        );
+        const rate = Math.max(q.avg7, ahead.reduce((a, d) => a + F(c, q.store_id, q.sku, d).f, 0) / HORIZON);
         return { q, spare: Math.floor(q.on_hand - 21 * rate) };
       })
       .filter((x) => x.spare > 0)
@@ -571,7 +585,7 @@ async function stockoutSignal(c: Ctx, storeId: string, category: string) {
       donor_stores: donorList,
       arrives: label(etaB),
       handling_cost: money(handling),
-      sales_protected_7d: money(evB.salesProtected),
+      sales_protected_14d: money(evB.salesProtected),
       share_of_need_covered: `${Math.round((100 * unitsB) / Math.max(needTotal, 1))}%`,
     },
     score: evB.marginProtected - handling,
@@ -653,12 +667,9 @@ async function excessPoSignal(c: Ctx, po: PoScan) {
   const pct = Math.round(po.excessPct * 100);
   const skus = po.lines.map((l) => l.p);
 
-  const chartDays = range(addDays(AS_OF, -28), addDays(AS_OF, 13));
-  const series: SeriesPoint[] = chartDays.map((d) => {
-    const pt: SeriesPoint = {
-      date: d,
-      ly: skus.reduce((a, p) => a + (c.hist.get(k3(po.store, p.sku, addDays(d, -364))) ?? 0), 0),
-    };
+  const chartDays = range(addDays(AS_OF, -28), addDays(AS_OF, HORIZON - 1));
+  const daily: SeriesPoint[] = chartDays.map((d) => {
+    const pt: SeriesPoint = { date: d };
     if (d < AS_OF) pt.actual = skus.reduce((a, p) => a + (c.hist.get(k3(po.store, p.sku, d)) ?? 0), 0);
     else {
       pt.forecast = +skus.reduce((a, p) => a + F(c, po.store, p.sku, d).f, 0).toFixed(1);
@@ -667,13 +678,14 @@ async function excessPoSignal(c: Ctx, po: PoScan) {
     }
     return pt;
   });
+  const series = withStockLevel(daily, win[0]);
 
   const signal: SignalPayload = {
     kind: 'excess_po',
     store_id: po.store,
     category: 'Fresh',
     store: person,
-    title: `${st.store}'s year-end fresh order is ${pct}% above forecast`,
+    title: `${st.store}'s mid-December fresh order is ${pct}% above forecast`,
     summary: `${po.po} to Greenleaf Fresh for ${label(po.delivery)} orders ${units(po.qty)} units for ${span(win[0], win[3])}; the forecast is ${units(po.fw)}. It was copied from last year's order (+3%).`,
     headline: [
       { label: 'Fresh waste at risk', value: money(po.wasteValue), tone: 'bad' },
@@ -686,7 +698,7 @@ async function excessPoSignal(c: Ctx, po: PoScan) {
     ],
     insight: {
       title: "Last year's spike was a promotion, and shoppers are away",
-      text: `The same days last year ran the ${promo ? `${s(promo.promo_name)} (+${n(promo.uplift_pct)}%)` : 'a fresh promotion'}, which moves to Lunar New Year this time. And ${units(awayPeak)} ${st.store} loyalty households (${awayPct.toFixed(0)}%) will be travelling over the holiday week, so fewer meals are cooked at home.`,
+      text: `The same days last year ran the ${promo ? `${s(promo.promo_name)} (+${n(promo.uplift_pct)}%)` : 'a fresh promotion'}, which moves to Lunar New Year this time. And ${units(awayPeak)} ${st.store} loyalty households (${awayPct.toFixed(0)}%) will be away on holiday that week, so fewer meals are cooked at home.`,
       source: 'Lakehouse promotions calendar + Customer behaviour API → gold',
     },
     drivers: [
@@ -716,7 +728,7 @@ async function excessPoSignal(c: Ctx, po: PoScan) {
         label: `${po.po}: ${units(po.qty / win.length)} a day ordered`,
         perDay: Math.round(po.qty / win.length),
       },
-      showLy: true,
+      showStockLevel: true,
     },
     lines: po.lines.map((l) => ({
       sku: l.p.sku,
@@ -762,7 +774,7 @@ async function excessPoSignal(c: Ctx, po: PoScan) {
     ],
     tradeoffs: [
       'One change, made once: simplest for the store and the supplier.',
-      "If New Year's Eve runs well above forecast, the store relies on the next regular order.",
+      'If demand runs well above forecast, the store relies on the next regular order.',
     ],
     confidence: `Forecast error on fresh last week was ${'{fresh_wape}'}% at store × SKU × week.`,
     clause_ids: ['GRN-3.1', 'FRS-2.1', 'PRM-1.2', 'OPS-2.4'],
@@ -784,7 +796,7 @@ async function excessPoSignal(c: Ctx, po: PoScan) {
     score: po.wasteValue - wasteA,
   };
 
-  // Option B: split into two drops; the second is sized on 29 Dec against what actually sold.
+  // Option B: split into two drops; the second is sized the day before it lands, against what actually sold.
   const d2 = addDays(po.delivery, 2);
   const splitLines: Line[] = [];
   let wasteB = 0;
@@ -813,20 +825,20 @@ async function excessPoSignal(c: Ctx, po: PoScan) {
   const optB: RecPayload = {
     kind: 'split',
     title: `Split ${po.po} into two deliveries`,
-    summary: `Take ${units(splitLines.filter((_, i) => i % 2 === 0).reduce((a, l) => a + l.qty, 0))} units on ${label(po.delivery)} and size a second drop for ${label(d2)} on what actually sells, so New Year's Eve stock is fresh.`,
+    summary: `Take ${units(splitLines.filter((_, i) => i % 2 === 0).reduce((a, l) => a + l.qty, 0))} units on ${label(po.delivery)} and size a second drop for ${label(d2)} on what actually sells, so the second half of the week gets fresh stock.`,
     action: `Ask Greenleaf to split ${po.po} before 14:00 on ${label(cutoff)}`,
     eta: `${short(po.delivery)} and ${short(d2)}`,
     lines: splitLines,
     impact: [
       { label: 'Waste avoided', value: money(po.wasteValue - wasteB), tone: 'good' },
-      { label: 'Fresher stock for', value: "New Year's Eve", tone: 'good' },
+      { label: 'Fresher stock for', value: span(d2, addDays(d2, 1)), tone: 'good' },
       { label: 'Extra delivery charge', value: 'S$0', tone: 'neutral' },
       { label: 'Second drop confirmed', value: short(addDays(d2, -1)), tone: 'neutral' },
     ],
     tradeoffs: [
-      "Protects New Year's Eve if it runs hot: the second drop can go up as well as down.",
-      'Salmon (3-day shelf life) arrives on the 30th instead of the 28th.',
-      'Two deliveries to receive, and someone must confirm the second drop on the 29th.',
+      'If demand runs hot, the second drop can go up as well as down.',
+      `Half the salmon (3-day shelf life) arrives on ${short(d2)} instead of ${short(po.delivery)}, so less of it ages on the shelf.`,
+      `Two deliveries to receive, and someone must confirm the second drop on ${short(addDays(d2, -1))}.`,
     ],
     confidence: "Each drop carries a day's worth of safety stock across two days.",
     clause_ids: ['GRN-3.4', 'GRN-3.1', 'PRM-1.2', 'OPS-2.4'],
@@ -844,6 +856,7 @@ async function excessPoSignal(c: Ctx, po: PoScan) {
       amendment_cutoff: `${label(cutoff)}, 14:00`,
       waste_avoided: money(po.wasteValue - wasteB),
       last_year_promotion: promo ? `${s(promo.promo_name)} (+${n(promo.uplift_pct)}%)` : 'none',
+      households_away_pct: `${awayPct.toFixed(0)}%`,
     },
     score: po.wasteValue - wasteB - 1,
   };
@@ -856,7 +869,16 @@ async function excessPoSignal(c: Ctx, po: PoScan) {
 }
 
 // ── Screen 2 API ──────────────────────────────────────────────────────────────────────────────
+/**
+ * ready turns true once a run started from the app has finished publish; until then (first start, after
+ * a reset, or while a new run rebuilds the tables) there is nothing to show.
+ */
 export async function getDecisions(): Promise<Record<string, unknown>> {
+  const [run] = await sql(
+    `SELECT status FROM ${S}.pipeline_runs WHERE stats->>'seeded' IS NULL ORDER BY run_id DESC LIMIT 1`
+  );
+  if (run?.status !== 'succeeded')
+    return { ready: false, as_of: AS_OF, model: null, model_service: modelService(), signals: [], log: [] };
   const signals = await sql(
     `SELECT signal_id, run_id, kind, store_id, title, severity, status, payload FROM ${S}.agent_signals ORDER BY signal_id`
   );
@@ -880,6 +902,7 @@ export async function getDecisions(): Promise<Record<string, unknown>> {
       )
     : [];
   return {
+    ready: true,
     as_of: AS_OF,
     model: model ?? null,
     model_service: modelService(),
@@ -972,7 +995,7 @@ function linesText(rec: RecPayload): string {
   return rec.lines.map((l) => `- ${l.name} (${l.sku}): ${units(l.qty)}${l.note ? ` (${l.note})` : ''}`).join('\n');
 }
 
-function templateDraft(sig: SignalPayload, rec: RecPayload): { subject: string; body: string } {
+export function templateDraft(sig: SignalPayload, rec: RecPayload): { subject: string; body: string } {
   const first = rec.recipient.name.split(' ')[0];
   const f = rec.facts as Record<string, string>;
   const sales = rec.impact.find((i) => i.label === 'Sales protected')?.value;
@@ -985,7 +1008,7 @@ function templateDraft(sig: SignalPayload, rec: RecPayload): { subject: string; 
         subject: `${rec.recipient.store} winter apparel: please confirm an expedited order today`,
         body:
           `${opening}Please confirm this expedited order, picked from the Jurong DC so it arrives on ${f.arrives} [NPK-4.2]:\n${linesText(rec)}\n\n` +
-          `Order value ${f.order_value}, including ${f.freight} expedite freight. It protects about ${sales} of sales over the next 7 days.\n\n` +
+          `Order value ${f.order_value}, including ${f.freight} expedite freight. It protects about ${sales} of sales over the next 14 days.\n\n` +
           `A draft order is waiting for you in store ordering. It needs your confirmation because it is above S$2,000 [OPS-2.4].\n\nThanks,\nReplenishment planning`,
       };
     return {
@@ -998,7 +1021,7 @@ function templateDraft(sig: SignalPayload, rec: RecPayload): { subject: string; 
   }
   const opening =
     `Hi ${first},\n\n${f.order} to ${f.supplier} for ${f.delivery ?? f.first_delivery} orders ${f.ordered_units} units; we expect ${rec.recipient.store} to sell ${f.forecast_units}.\n\n` +
-    `It copies last year's order, which was placed for the ${f.last_year_promotion}. That promotion moves to Lunar New Year this time [PRM-1.2]. ${sig.insight.text.split('. ').slice(1).join('. ')}\n\n`;
+    `It copies last year's order, which was placed for the ${f.last_year_promotion}. That promotion moves to Lunar New Year this time [PRM-1.2]. And ${f.households_away_pct} of the store's loyalty households are away on holiday that week, so fewer meals are cooked at home.\n\n`;
   if (rec.kind === 'amend')
     return {
       subject: `${f.order}: please amend before ${f.amendment_cutoff}`,
@@ -1011,21 +1034,10 @@ function templateDraft(sig: SignalPayload, rec: RecPayload): { subject: string; 
     subject: `${f.order}: please split into two deliveries before ${f.amendment_cutoff}`,
     body:
       `${opening}Please ask Greenleaf to split ${f.order} into two deliveries [GRN-3.4], before ${f.amendment_cutoff} [GRN-3.1]:\n${linesText(rec)}\n\n` +
-      `We will confirm the second drop on ${f.second_drop_confirmed_on} against what has sold, so it can go up for New Year's Eve if needed. This avoids about ${f.waste_avoided} of fresh waste.\n\n` +
+      `We will confirm the second drop on ${f.second_drop_confirmed_on} against what has sold, so it can go up if demand runs hot. This avoids about ${f.waste_avoided} of fresh waste.\n\n` +
       `It needs your confirmation because lines change by more than 30% [OPS-2.4].\n\nThanks,\nReplenishment planning`,
   };
 }
-
-const SYSTEM = `You draft short operational e-mails for Supermart's replenishment planning team, sent to a store manager after a planner approves an AI recommendation.
-Rules:
-- Use only the facts provided. Never invent numbers, dates, people or products.
-- Plain, warm, direct English. No marketing tone. Under 200 words in the body.
-- Say what is happening, why (one or two sentences, citing the customer and data insight), and exactly what the manager must do and by when.
-- Include every order line exactly as given, one per line, starting with "- ", keeping product names, SKU codes and quantities unchanged.
-- Cite clause ids in square brackets, e.g. [NPK-4.2], right after the sentence that relies on them.
-- Never include customer names, e-mail addresses or member ids.
-- Sign off as "Replenishment planning".
-Return only JSON: {"subject": "...", "body": "..."} with \\n for line breaks.`;
 
 function promptFor(sig: SignalPayload, rec: RecPayload, clauses: Record<string, unknown>[]): string {
   return JSON.stringify(
@@ -1053,6 +1065,7 @@ function promptFor(sig: SignalPayload, rec: RecPayload, clauses: Record<string, 
   );
 }
 
+/** The planner's starting draft: the template on this recommendation's facts, instant and never the model. */
 export async function draftEmail(recId: string): Promise<Record<string, unknown> | null> {
   const r = await loadRec(recId);
   if (!r) return null;
@@ -1060,33 +1073,16 @@ export async function draftEmail(recId: string): Promise<Record<string, unknown>
     `SELECT clause_id, doc_title, clause_title, body FROM ${S}.gold_knowledge_clauses WHERE clause_id = ANY($1::text[])`,
     [r.rec.clause_ids]
   );
-  let subject = '';
-  let body = '';
-  let source: 'model' | 'template' = 'template';
-  let note: string | null = null;
   const t0 = Date.now();
-  try {
-    const text = await complete(SYSTEM, promptFor(r.signal, r.rec, clauses));
-    const json = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)) as {
-      subject?: string;
-      body?: string;
-    };
-    if (!json.subject || !json.body) throw new Error('Model reply had no subject or body');
-    subject = json.subject.trim();
-    body = json.body.trim();
-    source = 'model';
-  } catch (err) {
-    note = err instanceof Error ? err.message : String(err);
-    ({ subject, body } = templateDraft(r.signal, r.rec));
-  }
+  const { subject, body } = templateDraft(r.signal, r.rec);
   const draft = {
     to: r.rec.recipient,
     cc: [PLANNING_INBOX],
     subject,
     body,
-    source,
-    model: source === 'model' ? modelService() : null,
-    note,
+    source: 'template',
+    model: null,
+    note: null,
     ms: Date.now() - t0,
     grounding: [
       { label: 'Gold position', detail: `supermart.gold.replenishment_position · ${r.signal.store.store}` },

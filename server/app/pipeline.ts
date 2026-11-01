@@ -3,11 +3,12 @@
 //   silver  → parse, conform, de-duplicate, quarantine bad rows, hash member identities
 //   gold    → one replenishment position per store × SKU, travel features, knowledge clauses
 //   train   → fit and backtest the demand forecast, register a new model version, score 14 days
-//   publish → refresh the insights tiles and let the agent raise signals and recommendations
-// In production this is a Lakeflow job over Delta tables in Unity Catalog; the demo runs the same
+//   publish → let the agent raise signals and recommendations for Agent Decisions
+// In production this is a Lakeflow job over Delta tables in Unity Catalog; the app runs the same
 // steps as SQL against Lakebase so it works in any workspace with no extra setup.
 import { sql } from '../lib/db';
 import { publish } from './agent';
+import { RUN_MINUTES, TASK_MINUTES, shapeRun, type HistoryRun } from './history';
 import { train } from './model';
 import { AS_OF, SCHEMA as S, UC } from './scenario';
 
@@ -27,6 +28,8 @@ async function insertCount(insert: string, params: unknown[] = []): Promise<numb
 }
 
 export async function startRun(actor: string): Promise<number> {
+  // Only one run goes at a time (routes/api.ts), so a run still marked running was abandoned.
+  await sql(`UPDATE ${S}.pipeline_runs SET status = 'failed', finished_at = now() WHERE status = 'running'`);
   const [row] = await sql(
     `INSERT INTO ${S}.pipeline_runs (status, triggered_by) VALUES ('running', $1) RETURNING run_id`,
     [actor]
@@ -37,11 +40,12 @@ export async function startRun(actor: string): Promise<number> {
 async function saveTask(runId: number, task: TaskId, stats: Stats, done = false): Promise<void> {
   await sql(
     `UPDATE ${S}.pipeline_runs
-     SET stats = stats || jsonb_build_object($2::text, $3::jsonb),
+     SET stats = stats || jsonb_build_object($2::text, $3::jsonb)
+                 || CASE WHEN $4 THEN jsonb_build_object('duration_min', $5::int) ELSE '{}'::jsonb END,
          status = CASE WHEN $4 THEN 'succeeded' ELSE status END,
          finished_at = CASE WHEN $4 THEN now() ELSE finished_at END
      WHERE run_id = $1`,
-    [runId, task, JSON.stringify(stats), done]
+    [runId, task, JSON.stringify(stats), done, RUN_MINUTES]
   );
 }
 
@@ -311,16 +315,23 @@ export async function runTask(runId: number, task: TaskId): Promise<Stats> {
     await failRun(runId, task, err instanceof Error ? err.message : String(err)).catch(() => undefined);
     throw err;
   }
-  const out = { ...stats, ms: Date.now() - t0 };
+  const out = { ...stats, ms: Date.now() - t0, minutes: TASK_MINUTES[task] };
   await saveTask(runId, task, out, task === 'publish');
   return out;
 }
 
-/** Whole job in one go (bootstrap, so Screen 2 has data before anyone presses Run). */
-export async function runAll(actor: string): Promise<number> {
-  const runId = await startRun(actor);
-  for (const t of TASKS) await runTask(runId, t);
-  return runId;
+/** Newest first: the seeded scheduled runs and every run started from the app. */
+export async function runHistory(limit = 6): Promise<HistoryRun[]> {
+  const rows = await sql(
+    `SELECT run_id, status, triggered_by, stats->>'seeded' AS seeded,
+            to_char(started_at AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD') AS sgt_date,
+            to_char(started_at AT TIME ZONE 'Asia/Singapore', 'HH24:MI:SS') AS sgt_time,
+            stats->>'duration_min' AS duration_min,
+            coalesce(stats->>'rows_ingested', stats->'ingest'->>'rows') AS rows_ingested
+     FROM ${S}.pipeline_runs ORDER BY run_id DESC LIMIT $1`,
+    [limit]
+  );
+  return rows.map(shapeRun);
 }
 
 export async function latestRun(): Promise<Record<string, unknown> | null> {
@@ -328,7 +339,7 @@ export async function latestRun(): Promise<Record<string, unknown> | null> {
     `SELECT run_id, status, triggered_by, stats,
             to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS started_at,
             to_char(finished_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS finished_at
-     FROM ${S}.pipeline_runs WHERE status = 'succeeded' ORDER BY run_id DESC LIMIT 1`
+     FROM ${S}.pipeline_runs WHERE status = 'succeeded' AND stats->>'seeded' IS NULL ORDER BY run_id DESC LIMIT 1`
   );
   return row ?? null;
 }

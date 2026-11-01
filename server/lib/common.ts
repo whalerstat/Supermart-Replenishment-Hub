@@ -1,4 +1,4 @@
-// server/lib/common.ts — tables every demo app gets, plus the two write helpers
+// server/lib/common.ts — tables every app of this kind gets, plus the two write helpers
 // that both the UI routes and the agent's write tools call.
 import { sql } from './db';
 

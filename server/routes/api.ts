@@ -1,10 +1,12 @@
 // server/routes/api.ts — HTTP surface for the two screens.
-//   Screen 1 (pipeline):  POST /api/pipeline/runs, POST /api/pipeline/runs/:id/:task, GET /api/pipeline/latest
+//   Screen 1 (pipeline):  POST /api/pipeline/runs, POST /api/pipeline/runs/:id/:task, GET /api/pipeline/latest,
+//                         GET /api/pipeline/history
 //   Screen 2 (decisions): GET /api/decisions, POST /api/decisions/recs/:id/{draft|revise|approve|reject}
+//   POST /api/reset re-seeds the schema (only with DEMO_ALLOW_RESET=true)
 import type { Application, Request, Response } from 'express';
 import { z } from 'zod';
 import { REVISE_SYSTEM, approve, draftEmail, getDecisions, reject, reviseContext } from '../app/agent';
-import { TASKS, latestRun, runTask, startRun, type TaskId } from '../app/pipeline';
+import { TASKS, latestRun, runHistory, runTask, startRun, type TaskId } from '../app/pipeline';
 import { AS_OF, SCHEMA as S, UC } from '../app/scenario';
 import { bootstrap } from '../lib/bootstrap';
 import { sql } from '../lib/db';
@@ -35,6 +37,7 @@ const ReviseBody = z.object({
 const RejectBody = z.object({ reason: z.string().max(500).optional() });
 
 /** One pipeline run at a time: a second click while a run is going gets a 409. */
+const RUN_LOCK_MS = 5 * 60_000;
 let activeRun: { id: number; startedAt: number } | null = null;
 
 export function registerRoutes(app: Application): void {
@@ -45,7 +48,7 @@ export function registerRoutes(app: Application): void {
   app.get('/api/config', (_req, res) => {
     res.json({
       title: 'Supermart Replenishment Hub',
-      subtitle: 'Supermart · fictional data',
+      subtitle: 'Supermart · 6 stores · Singapore',
       persona: 'replenishment planners',
       as_of: AS_OF,
       uc: UC,
@@ -70,9 +73,17 @@ export function registerRoutes(app: Application): void {
     }
   });
 
+  app.get('/api/pipeline/history', async (_req, res) => {
+    try {
+      res.json({ runs: await runHistory() });
+    } catch (err) {
+      fail(res, err);
+    }
+  });
+
   app.post('/api/pipeline/runs', async (req, res) => {
-    // A run abandoned mid-way (browser closed) frees the lock after 2 minutes.
-    if (activeRun && Date.now() - activeRun.startedAt < 120_000) {
+    // A run abandoned mid-way (browser closed) frees the lock after 5 minutes; a full run takes 90 s.
+    if (activeRun && Date.now() - activeRun.startedAt < RUN_LOCK_MS) {
       res.status(409).json({ error: `Run #${activeRun.id} is still in progress` });
       return;
     }
@@ -218,7 +229,8 @@ export function registerRoutes(app: Application): void {
     }
   });
 
-  app.post('/api/demo/reset', async (_req, res) => {
+  // Re-seeds the sources and the run history; Agent Decisions stays empty until the next run.
+  app.post('/api/reset', async (_req, res) => {
     if (process.env.DEMO_ALLOW_RESET !== 'true') {
       res.status(403).json({ error: 'set DEMO_ALLOW_RESET=true in app.yaml to enable' });
       return;
