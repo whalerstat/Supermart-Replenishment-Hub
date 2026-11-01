@@ -1,0 +1,127 @@
+{
+  "title": "Supermart Replenishment Hub (demo)",
+  "description": "Mock data in Lakebase: store stock position, 14-day forecast, agent stock-out signals and recommendations, decisions and queued e-mails for a fictional Singapore grocer.",
+  "schema": "supermart_replen",
+  "tables": [
+    {
+      "name": "gold_replenishment_position",
+      "columns": [
+        { "name": "store_name", "synonyms": ["store", "shop", "location"], "entity": true },
+        { "name": "product_name", "synonyms": ["product", "item"], "entity": true },
+        { "name": "sku", "synonyms": ["product code", "item code"] },
+        { "name": "category", "synonyms": ["department", "product category"], "entity": true },
+        { "name": "on_hand", "synonyms": ["stock", "stock on hand", "inventory", "units in store"] },
+        { "name": "open_po_qty", "synonyms": ["on order", "incoming units", "open orders"] },
+        { "name": "next_delivery", "synonyms": ["next arrival", "delivery date"] },
+        { "name": "avg_daily_7d", "synonyms": ["recent daily sales", "7 day run rate"] },
+        { "name": "avg_daily_28d", "synonyms": ["daily sales", "28 day run rate"] },
+        { "name": "days_of_cover", "synonyms": ["cover", "days of stock", "days left"] },
+        { "name": "cold_departures_next10", "synonyms": ["cold trips", "cold destination departures"] },
+        { "name": "supplier_id", "synonyms": ["supplier", "vendor"] }
+      ]
+    },
+    {
+      "name": "gold_store_travel_daily",
+      "columns": [
+        { "name": "store_id", "synonyms": ["store"] },
+        { "name": "biz_date", "synonyms": ["date", "day"] },
+        { "name": "cold_departures_next10", "synonyms": ["cold trips", "cold destination departures"] },
+        { "name": "departures_next10", "synonyms": ["trips", "departures"] },
+        { "name": "members_away", "synonyms": ["customers travelling", "members travelling"] }
+      ]
+    },
+    {
+      "name": "gold_knowledge_clauses",
+      "columns": [
+        { "name": "doc_title", "synonyms": ["document", "policy"], "entity": true },
+        { "name": "clause_title", "synonyms": ["clause", "rule"] },
+        { "name": "applies_to", "synonyms": ["scope", "applies to category"] }
+      ]
+    },
+    {
+      "name": "ml_forecast",
+      "columns": [
+        { "name": "store_id", "synonyms": ["store"] },
+        { "name": "sku", "synonyms": ["product code", "item code"] },
+        { "name": "biz_date", "synonyms": ["date", "forecast day"] },
+        { "name": "forecast", "synonyms": ["predicted units", "forecast units", "expected demand"] },
+        { "name": "p10", "synonyms": ["low case", "lower bound"] },
+        { "name": "p90", "synonyms": ["high case", "upper bound"] },
+        { "name": "model_version", "synonyms": ["model"] }
+      ]
+    },
+    {
+      "name": "agent_signals",
+      "columns": [
+        { "name": "signal_id", "synonyms": ["flag id", "alert id"] },
+        { "name": "kind", "synonyms": ["signal type", "flag type"], "entity": true },
+        { "name": "store_id", "synonyms": ["store"] },
+        { "name": "title", "synonyms": ["flag", "alert", "issue"] },
+        { "name": "severity", "synonyms": ["priority", "urgency"], "entity": true },
+        { "name": "status", "synonyms": ["state"], "entity": true }
+      ]
+    },
+    {
+      "name": "agent_recommendations",
+      "columns": [
+        { "name": "rec_id", "synonyms": ["recommendation id"] },
+        { "name": "signal_id", "synonyms": ["flag id", "alert id"] },
+        { "name": "rank", "synonyms": ["option", "preference order"] },
+        { "name": "status", "synonyms": ["state", "decision status"], "entity": true },
+        { "name": "decided_by", "synonyms": ["approver", "decision maker"] },
+        { "name": "decided_at", "synonyms": ["decision time", "approved at"] }
+      ]
+    },
+    {
+      "name": "decision_log",
+      "columns": [
+        { "name": "entity_type", "synonyms": ["object type"], "entity": true },
+        { "name": "entity_id", "synonyms": ["object id"] },
+        { "name": "action", "synonyms": ["decision", "event"], "entity": true },
+        { "name": "actor", "synonyms": ["user", "who", "decided by"] },
+        { "name": "source", "synonyms": ["origin", "channel"], "entity": true },
+        { "name": "created_at", "synonyms": ["when", "time"] }
+      ]
+    },
+    {
+      "name": "outbox",
+      "columns": [
+        { "name": "channel", "synonyms": ["medium"], "entity": true },
+        { "name": "recipient", "synonyms": ["to", "sent to", "store manager"] },
+        { "name": "subject", "synonyms": ["title", "e-mail subject"] },
+        { "name": "status", "synonyms": ["delivery status", "state"], "entity": true },
+        { "name": "created_at", "synonyms": ["when", "queued at"] }
+      ]
+    }
+  ],
+  "instructions": [
+    "All data is fictional demo data for a Singapore grocer. The business date is pinned to 2026-12-21: never use current_date(); treat 2026-12-21 as today.",
+    "gold_replenishment_position has one row per store_id and sku with on_hand, open_po_qty and days_of_cover. It is the only table with store_name; join other tables to it on store_id to name a store (SELECT DISTINCT store_id, store_name).",
+    "ml_forecast holds a daily unit forecast per store_id, sku and biz_date for the 14 days from 2026-12-21; p10 and p90 are the low and high case. Forecast vs on-hand: join to gold_replenishment_position on store_id and sku and compare on_hand with SUM(forecast) over the next 7 days (biz_date < date '2026-12-28'). Use the highest model_version only.",
+    "agent_signals are the stores and products the agent flagged: kind is 'stockout' or 'excess_po', severity is 'high' or 'medium', and status starts as 'awaiting decision' and becomes 'e-mail sent' after approval. A store is flagged when it has an agent_signals row.",
+    "agent_recommendations hold the options for each signal (join on signal_id). status is 'proposed', 'approved', 'rejected' or 'not chosen'. Decisions approved = status = 'approved'.",
+    "decision_log is the audit trail (action such as 'approved and sent' or 'rejected', actor, source ui/agent/seed). outbox holds the store-manager e-mails that were queued; they are never actually sent.",
+    "Show units as whole numbers, days of cover and percentages to 1 decimal."
+  ],
+  "sample_questions": [
+    "Which stores are flagged by the agent, and how severe is each flag?",
+    "Compare the next 7 days of forecast with on-hand stock for the lowest days of cover",
+    "How many recommendations were approved, rejected or are still proposed?",
+    "Which decisions were logged most recently, and who made them?",
+    "What outbox messages were queued, and to whom?"
+  ],
+  "example_sqls": [
+    {
+      "question": "Which stores are flagged by the agent, and how severe is each flag?",
+      "sql": "SELECT g.store_name, s.severity, s.kind, s.status, s.title\nFROM {{catalog}}.supermart_replen.agent_signals s\nJOIN (SELECT DISTINCT store_id, store_name FROM {{catalog}}.supermart_replen.gold_replenishment_position) g ON g.store_id = s.store_id\nORDER BY s.severity, g.store_name"
+    },
+    {
+      "question": "Compare the next 7 days of forecast with on-hand stock for the lowest days of cover",
+      "sql": "SELECT p.store_name, p.product_name, p.on_hand, ROUND(SUM(f.forecast)) AS forecast_7d, p.days_of_cover\nFROM {{catalog}}.supermart_replen.gold_replenishment_position p\nJOIN {{catalog}}.supermart_replen.ml_forecast f ON f.store_id = p.store_id AND f.sku = p.sku\nWHERE f.biz_date >= DATE'2026-12-21' AND f.biz_date < DATE'2026-12-28'\n  AND f.model_version = (SELECT MAX(model_version) FROM {{catalog}}.supermart_replen.ml_forecast)\nGROUP BY p.store_name, p.product_name, p.on_hand, p.days_of_cover\nORDER BY p.days_of_cover ASC\nLIMIT 20"
+    },
+    {
+      "question": "How many recommendations were approved, rejected or are still proposed?",
+      "sql": "SELECT status, COUNT(*) AS recommendations\nFROM {{catalog}}.supermart_replen.agent_recommendations\nGROUP BY status\nORDER BY recommendations DESC"
+    }
+  ]
+}

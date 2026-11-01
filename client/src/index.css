@@ -129,6 +129,11 @@
   .rise-in {
     animation: none;
   }
+  [data-slot='sheet-overlay'],
+  [data-slot='sheet-content'] {
+    animation: none;
+    transition: none;
+  }
 }
 
 /* AppKit's base gives every <p> a fixed 28px line height; let paragraphs follow their text size. */

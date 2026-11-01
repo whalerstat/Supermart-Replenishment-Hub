@@ -10,6 +10,8 @@ export interface UiConfig {
   model_service: string | null;
   dashboard_url: string | null;
   reset_enabled: boolean;
+  genie_enabled: boolean;
+  genie_space_url: string | null;
 }
 
 export type Row = Record<string, unknown>;

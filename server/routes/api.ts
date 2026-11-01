@@ -19,6 +19,13 @@ function fail(res: Response, err: unknown): void {
   res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
 }
 
+/** Deep link to the Genie space, or null when the space or the workspace host is unknown. */
+function genieSpaceUrl(): string | null {
+  const id = process.env.DATABRICKS_GENIE_SPACE_ID;
+  const host = process.env.DATABRICKS_HOST?.replace(/^https?:\/\//, '').replace(/\/+$/, '');
+  return id && host ? `https://${host}/genie/rooms/${id}` : null;
+}
+
 const ApproveBody = z.object({ subject: z.string().min(3).max(300), body: z.string().min(20).max(6000) });
 const RejectBody = z.object({ reason: z.string().max(500).optional() });
 
@@ -40,6 +47,8 @@ export function registerRoutes(app: Application): void {
       model_service: modelService(),
       dashboard_url: process.env.DASHBOARD_URL || null,
       reset_enabled: process.env.DEMO_ALLOW_RESET === 'true',
+      genie_enabled: Boolean(process.env.DATABRICKS_GENIE_SPACE_ID),
+      genie_space_url: genieSpaceUrl(),
     });
   });
 
