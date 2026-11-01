@@ -1,6 +1,6 @@
 {
-  "title": "Supermart Replenishment Hub (demo)",
-  "description": "Mock data in Lakebase: store stock position, 14-day forecast, agent stock-out signals and recommendations, decisions and queued e-mails for a fictional Singapore grocer.",
+  "title": "Supermart Replenishment Hub",
+  "description": "Lakebase data for Supermart, a Singapore grocer: store stock position, 14-day forecast, agent stock-out signals and recommendations, decisions and queued e-mails.",
   "schema": "supermart_replen",
   "tables": [
     {
@@ -95,9 +95,9 @@
     }
   ],
   "instructions": [
-    "All data is fictional demo data for a Singapore grocer. The business date is pinned to 2026-12-21: never use current_date(); treat 2026-12-21 as today.",
+    "All data is mock data for Supermart, a Singapore grocer. The business date is pinned to 2026-12-07: never use current_date(); treat 2026-12-07 as today.",
     "gold_replenishment_position has one row per store_id and sku with on_hand, open_po_qty and days_of_cover. It is the only table with store_name; join other tables to it on store_id to name a store (SELECT DISTINCT store_id, store_name).",
-    "ml_forecast holds a daily unit forecast per store_id, sku and biz_date for the 14 days from 2026-12-21; p10 and p90 are the low and high case. Forecast vs on-hand: join to gold_replenishment_position on store_id and sku and compare on_hand with SUM(forecast) over the next 7 days (biz_date < date '2026-12-28'). Use the highest model_version only.",
+    "ml_forecast holds a daily unit forecast per store_id, sku and biz_date for the 14 days from 2026-12-07; p10 and p90 are the low and high case. Forecast vs on-hand: join to gold_replenishment_position on store_id and sku and compare on_hand with SUM(forecast) over the next 14 days (biz_date < date '2026-12-21'). Use the highest model_version only.",
     "agent_signals are the stores and products the agent flagged: kind is 'stockout' or 'excess_po', severity is 'high' or 'medium', and status starts as 'awaiting decision' and becomes 'e-mail sent' after approval. A store is flagged when it has an agent_signals row.",
     "agent_recommendations hold the options for each signal (join on signal_id). status is 'proposed', 'approved', 'rejected' or 'not chosen'. Decisions approved = status = 'approved'.",
     "decision_log is the audit trail (action such as 'approved and sent' or 'rejected', actor, source ui/agent/seed). outbox holds the store-manager e-mails that were queued; they are never actually sent.",
@@ -105,7 +105,7 @@
   ],
   "sample_questions": [
     "Which stores are flagged by the agent, and how severe is each flag?",
-    "Compare the next 7 days of forecast with on-hand stock for the lowest days of cover",
+    "Compare the next 14 days of forecast with on-hand stock for the lowest days of cover",
     "How many recommendations were approved, rejected or are still proposed?",
     "Which decisions were logged most recently, and who made them?",
     "What outbox messages were queued, and to whom?"
@@ -116,8 +116,8 @@
       "sql": "SELECT g.store_name, s.severity, s.kind, s.status, s.title\nFROM {{catalog}}.supermart_replen.agent_signals s\nJOIN (SELECT DISTINCT store_id, store_name FROM {{catalog}}.supermart_replen.gold_replenishment_position) g ON g.store_id = s.store_id\nORDER BY s.severity, g.store_name"
     },
     {
-      "question": "Compare the next 7 days of forecast with on-hand stock for the lowest days of cover",
-      "sql": "SELECT p.store_name, p.product_name, p.on_hand, ROUND(SUM(f.forecast)) AS forecast_7d, p.days_of_cover\nFROM {{catalog}}.supermart_replen.gold_replenishment_position p\nJOIN {{catalog}}.supermart_replen.ml_forecast f ON f.store_id = p.store_id AND f.sku = p.sku\nWHERE f.biz_date >= DATE'2026-12-21' AND f.biz_date < DATE'2026-12-28'\n  AND f.model_version = (SELECT MAX(model_version) FROM {{catalog}}.supermart_replen.ml_forecast)\nGROUP BY p.store_name, p.product_name, p.on_hand, p.days_of_cover\nORDER BY p.days_of_cover ASC\nLIMIT 20"
+      "question": "Compare the next 14 days of forecast with on-hand stock for the lowest days of cover",
+      "sql": "SELECT p.store_name, p.product_name, p.on_hand, ROUND(SUM(f.forecast)) AS forecast_14d, p.days_of_cover\nFROM {{catalog}}.supermart_replen.gold_replenishment_position p\nJOIN {{catalog}}.supermart_replen.ml_forecast f ON f.store_id = p.store_id AND f.sku = p.sku\nWHERE f.biz_date >= DATE'2026-12-07' AND f.biz_date < DATE'2026-12-21'\n  AND f.model_version = (SELECT MAX(model_version) FROM {{catalog}}.supermart_replen.ml_forecast)\nGROUP BY p.store_name, p.product_name, p.on_hand, p.days_of_cover\nORDER BY p.days_of_cover ASC\nLIMIT 20"
     },
     {
       "question": "How many recommendations were approved, rejected or are still proposed?",

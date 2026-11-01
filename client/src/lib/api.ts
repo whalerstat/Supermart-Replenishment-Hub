@@ -32,7 +32,7 @@ export interface Expectation {
 export interface Dashboard {
   projected_in_stock: number;
   at_risk: number;
-  lost_sales_7d: number;
+  lost_sales_14d: number;
   fresh_waste_risk: number;
   open_fresh_orders: number;
   stores: { store_id: string; store: string; at_risk: number; lost_sales: number; waste_risk: number }[];
@@ -73,6 +73,17 @@ export interface RunStats {
   publish?: { signals: number; recommendations: number; dashboard: Dashboard; app: string; ms: number };
 }
 export type TaskId = 'ingest' | 'silver' | 'gold' | 'train' | 'publish';
+export interface PipelineRun {
+  run_id: number;
+  started_at: string;
+  status: 'succeeded' | 'failed' | 'running';
+  duration_min: number | null;
+  triggered_by: string;
+  rows_ingested: number | null;
+}
+export interface PipelineHistory {
+  runs: PipelineRun[];
+}
 
 // ── Screen 2 ──
 export interface SeriesPoint {
@@ -83,6 +94,7 @@ export interface SeriesPoint {
   p90?: number;
   stock?: number;
   ly?: number;
+  stock_level?: number;
   driver?: number;
 }
 export interface Person {
@@ -132,6 +144,7 @@ export interface SignalPayload {
     driverLabel?: string;
     showStock?: boolean;
     showLy?: boolean;
+    showStockLevel?: boolean;
   };
   lines: { sku: string; name: string; a: string; b: string; c: string }[];
   lineHeads: [string, string, string];
@@ -186,6 +199,7 @@ export interface LogRow {
 }
 export interface Decisions {
   as_of: string;
+  ready: boolean;
   model: { version: number; metrics: ModelMetrics; trained_at: string } | null;
   model_service: string | null;
   signals: Signal[];

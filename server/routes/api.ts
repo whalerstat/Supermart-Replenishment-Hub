@@ -1,10 +1,12 @@
 // server/routes/api.ts — HTTP surface for the two screens.
-//   Screen 1 (pipeline):  POST /api/pipeline/runs, POST /api/pipeline/runs/:id/:task, GET /api/pipeline/latest
+//   Screen 1 (pipeline):  POST /api/pipeline/runs, POST /api/pipeline/runs/:id/:task, GET /api/pipeline/latest,
+//                         GET /api/pipeline/history
 //   Screen 2 (decisions): GET /api/decisions, POST /api/decisions/recs/:id/{draft|revise|approve|reject}
+//   POST /api/reset re-seeds the schema (only with DEMO_ALLOW_RESET=true)
 import type { Application, Request, Response } from 'express';
 import { z } from 'zod';
 import { REVISE_SYSTEM, approve, draftEmail, getDecisions, reject, reviseContext } from '../app/agent';
-import { TASKS, latestRun, runTask, startRun, type TaskId } from '../app/pipeline';
+import { TASKS, latestRun, runHistory, runTask, startRun, type TaskId } from '../app/pipeline';
 import { AS_OF, SCHEMA as S, UC } from '../app/scenario';
 import { bootstrap } from '../lib/bootstrap';
 import { sql } from '../lib/db';
@@ -34,8 +36,21 @@ const ReviseBody = z.object({
 });
 const RejectBody = z.object({ reason: z.string().max(500).optional() });
 
-/** One pipeline run at a time: a second click while a run is going gets a 409. */
-let activeRun: { id: number; startedAt: number } | null = null;
+/**
+ * One pipeline run at a time: a second click while a run is going gets a 409. The lock expires after
+ * RUN_IDLE_MS without a task call (the longest step hold is 27 s), so a closed tab frees it quickly.
+ * id -1 is a claim held while a run row is being created or the schema is being reset.
+ */
+const RUN_IDLE_MS = 60_000;
+let activeRun: { id: number; lastSeen: number } | null = null;
+
+function runBusy(): boolean {
+  return activeRun !== null && Date.now() - activeRun.lastSeen < RUN_IDLE_MS;
+}
+
+function busyMessage(): string {
+  return activeRun && activeRun.id > 0 ? `Run #${activeRun.id} is still in progress` : 'The app is being reset';
+}
 
 export function registerRoutes(app: Application): void {
   app.get('/api/whoami', (req, res) => {
@@ -45,7 +60,7 @@ export function registerRoutes(app: Application): void {
   app.get('/api/config', (_req, res) => {
     res.json({
       title: 'Supermart Replenishment Hub',
-      subtitle: 'Supermart · fictional data',
+      subtitle: 'Supermart · 6 stores · Singapore',
       persona: 'replenishment planners',
       as_of: AS_OF,
       uc: UC,
@@ -70,17 +85,27 @@ export function registerRoutes(app: Application): void {
     }
   });
 
+  app.get('/api/pipeline/history', async (_req, res) => {
+    try {
+      res.json({ runs: await runHistory() });
+    } catch (err) {
+      fail(res, err);
+    }
+  });
+
   app.post('/api/pipeline/runs', async (req, res) => {
-    // A run abandoned mid-way (browser closed) frees the lock after 2 minutes.
-    if (activeRun && Date.now() - activeRun.startedAt < 120_000) {
-      res.status(409).json({ error: `Run #${activeRun.id} is still in progress` });
+    if (runBusy()) {
+      res.status(409).json({ error: busyMessage() });
       return;
     }
+    // Claim before the first await so two near-simultaneous clicks cannot both start a run.
+    activeRun = { id: -1, lastSeen: Date.now() };
     try {
       const id = await startRun(who(req));
-      activeRun = { id, startedAt: Date.now() };
+      activeRun = { id, lastSeen: Date.now() };
       res.json({ run_id: id, tasks: TASKS });
     } catch (err) {
+      activeRun = null;
       fail(res, err);
     }
   });
@@ -92,10 +117,11 @@ export function registerRoutes(app: Application): void {
       res.status(400).json({ error: `task must be one of ${TASKS.join(', ')}` });
       return;
     }
-    if (activeRun?.id !== id) {
+    if (activeRun?.id !== id || !runBusy()) {
       res.status(409).json({ error: `Run #${id} is not the active run` });
       return;
     }
+    activeRun.lastSeen = Date.now();
     try {
       const stats = await runTask(id, task);
       if (task === 'publish') activeRun = null;
@@ -180,6 +206,10 @@ export function registerRoutes(app: Application): void {
   });
 
   app.post('/api/decisions/recs/:id/approve', async (req, res) => {
+    if (runBusy()) {
+      res.status(409).json({ error: `${busyMessage()}; reload the decisions when it finishes` });
+      return;
+    }
     const parsed = ApproveBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: 'subject and body are required' });
@@ -194,6 +224,10 @@ export function registerRoutes(app: Application): void {
   });
 
   app.post('/api/decisions/recs/:id/reject', async (req, res) => {
+    if (runBusy()) {
+      res.status(409).json({ error: `${busyMessage()}; reload the decisions when it finishes` });
+      return;
+    }
     const parsed = RejectBody.safeParse(req.body ?? {});
     try {
       const out = await reject(String(req.params.id), parsed.success ? (parsed.data.reason ?? '') : '', who(req));
@@ -218,16 +252,28 @@ export function registerRoutes(app: Application): void {
     }
   });
 
-  app.post('/api/demo/reset', async (_req, res) => {
+  // Re-seeds the sources and the run history; Agent Decisions stays empty until the next run.
+  app.post('/api/reset', async (_req, res) => {
     if (process.env.DEMO_ALLOW_RESET !== 'true') {
       res.status(403).json({ error: 'set DEMO_ALLOW_RESET=true in app.yaml to enable' });
       return;
     }
+    if (runBusy()) {
+      res.status(409).json({ error: busyMessage() });
+      return;
+    }
+    // Hold the run lock while the schema is dropped and re-seeded, so no run or second reset starts on
+    // half-built tables. Release only our own claim: the lock may have expired and been taken since.
+    const claim = { id: -1, lastSeen: Date.now() };
+    activeRun = claim;
+    const keepAlive = setInterval(() => (claim.lastSeen = Date.now()), 10_000);
     try {
-      activeRun = null;
       res.json({ result: await bootstrap(true) });
     } catch (err) {
       fail(res, err);
+    } finally {
+      clearInterval(keepAlive);
+      if (activeRun === claim) activeRun = null;
     }
   });
 }

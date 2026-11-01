@@ -18,7 +18,7 @@ import {
 
 const SAMPLE_QUESTIONS = [
   'Which stores have the most flagged stock-out signals?',
-  'Compare the 7-day forecast with on-hand stock for the lowest days of cover',
+  'Compare the 14-day forecast with on-hand stock for the lowest days of cover',
   'How many recommendations were approved, rejected or are still proposed?',
   'Which outbox messages were queued, and to whom?',
 ];
@@ -27,7 +27,11 @@ function Shell({ spaceUrl, children }: { spaceUrl: string | null; children: Reac
   return (
     <Sheet>
       <SheetTrigger asChild>
-        <Button variant="outline" size="sm" className="min-h-11 gap-1.5 md:min-h-8">
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1.5 max-md:min-h-14 max-md:w-full max-md:rounded-none max-md:border-0 max-md:text-sm md:min-h-8"
+        >
           <Sparkles aria-hidden className="size-4 text-brand" />
           Ask Genie
         </Button>
