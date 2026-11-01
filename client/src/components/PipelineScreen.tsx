@@ -1,7 +1,7 @@
 // client/src/components/PipelineScreen.tsx — Screen 1: the governed data foundation pipeline.
 // Pressing "Run job" calls the five job tasks in order (each is real work on the server); the flow
 // animates as each one runs, and the foundation box fills bronze → silver → gold as tables land.
-import { useCallback, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import {
   ArrowRight,
   Bot,
@@ -27,7 +27,6 @@ import {
   moneyK,
   nf,
   postJson,
-  sleep,
   useJson,
   type PipelineHistory,
   type PipelineRun,
@@ -37,18 +36,22 @@ import {
 } from '../lib/api';
 
 type State = 'idle' | 'running' | 'done' | 'failed';
-// `hold` is the least time the step stays on screen (the animation totals 30 s, the medallion steps under 2 s
-// each); `mins` is the mocked job time we record.
-const TASKS: { id: TaskId; label: string; hold: number; mins: number }[] = [
-  { id: 'ingest', label: 'Ingest three sources', hold: 1_500, mins: 4 },
-  { id: 'silver', label: 'Clean, conform and mask', hold: 1_500, mins: 3 },
-  { id: 'gold', label: 'Build the gold position', hold: 1_500, mins: 3 },
-  { id: 'train', label: 'Train and register the forecast', hold: 17_500, mins: 6 },
-  { id: 'publish', label: 'Publish dashboard and agent', hold: 8_000, mins: 2 },
+// `mins` is the mocked job time we record; the server owns the 30 s on-screen timing (server/routes/api.ts).
+const TASKS: { id: TaskId; label: string; mins: number }[] = [
+  { id: 'ingest', label: 'Ingest three sources', mins: 4 },
+  { id: 'silver', label: 'Clean, conform and mask', mins: 3 },
+  { id: 'gold', label: 'Build the gold position', mins: 3 },
+  { id: 'train', label: 'Train and register the forecast', mins: 6 },
+  { id: 'publish', label: 'Publish dashboard and agent', mins: 2 },
 ];
 const TOTAL_MINS = TASKS.reduce((a, t) => a + t.mins, 0);
-/** Rough server time per task call, taken out of the publish hold so the run still ends at about 30 s. */
-const TASK_CALL_MS = 1_200;
+interface LiveRun {
+  run_id: number;
+  tasks: Record<TaskId, State>;
+  stats: Record<string, unknown>;
+  error: string | null;
+  finished: boolean;
+}
 const IDLE: Record<TaskId, State> = { ingest: 'idle', silver: 'idle', gold: 'idle', train: 'idle', publish: 'idle' };
 
 // The server still ingests the Postgres and relational systems separately; the diagram shows them as one raw source.
@@ -369,40 +372,80 @@ export function PipelineScreen({
     [status, stats]
   );
 
-  async function run() {
-    setError(null);
-    setStats({});
-    setStatus(IDLE);
-    try {
-      const { run_id } = await postJson<{ run_id: number }>('/api/pipeline/runs', {});
-      setRunId(run_id);
-      setHistoryKey((k) => k + 1);
-      for (const t of TASKS) {
-        setStatus((s) => ({ ...s, [t.id]: 'running' }));
-        const call = () => postJson<Record<string, unknown>>(`/api/pipeline/runs/${run_id}/${t.id}`, {});
-        let out: Record<string, unknown>;
-        if (t.id === 'publish') {
-          // Hold first, then publish, so the server finishes (and frees the run lock) when the animation
-          // does rather than at the start of the last step.
-          await sleep(Math.max(0, t.hold - TASK_CALL_MS));
-          out = await call();
-        } else {
-          // The call and the hold overlap, so a fast medallion step really fills in under 2 s.
-          [out] = await Promise.all([call(), sleep(t.hold)]);
+  // The server plays the run; this screen (and any other open one, desktop or phone) just follows it.
+  const lastRun = useRef<{ id: number; finished: boolean } | null>(null);
+  const lastEpoch = useRef<number | null>(null);
+  const [startError, setStartError] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+  const onDone = useRef(onRunComplete);
+  useEffect(() => {
+    onDone.current = onRunComplete;
+  }, [onRunComplete]);
+  const [poke, setPoke] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = async () => {
+      let active = false;
+      try {
+        // A hung request must not stall the loop, so each poll gives up after 5 s.
+        const r = await fetch('/api/pipeline/live', { signal: AbortSignal.timeout(5_000) });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const { live, epoch } = (await r.json()) as { live: LiveRun | null; epoch: number };
+        if (!alive) return;
+        if (lastEpoch.current !== null && epoch !== lastEpoch.current) {
+          setHistoryKey((k) => k + 1);
+          onDone.current?.();
         }
-        setStats((s) => ({ ...s, [t.id]: out }));
-        setStatus((s) => ({ ...s, [t.id]: 'done' }));
+        lastEpoch.current = epoch;
+        const prev = lastRun.current;
+        if (!live) {
+          if (prev) {
+            setStatus(IDLE);
+            setStats({});
+            setRunId(null);
+            setError(null);
+          }
+          lastRun.current = null;
+        } else {
+          active = !live.finished;
+          setRunId(live.run_id);
+          setStatus(live.tasks);
+          setStats(live.stats as RunStats);
+          setError(live.error);
+          lastRun.current = { id: live.run_id, finished: live.finished };
+        }
+      } catch {
+        // A missed poll just waits for the next one.
       }
-      onRunComplete?.();
+      if (alive) timer = setTimeout(() => void tick(), document.hidden ? 5_000 : active ? 500 : 2_000);
+    };
+    // Coming back to the tab (or app) catches up at once instead of after the slow hidden interval.
+    const onVisible = () => {
+      if (document.hidden) return;
+      clearTimeout(timer);
+      void tick();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    void tick();
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [poke]);
+
+  async function run() {
+    setStartError(null);
+    setStarting(true);
+    try {
+      await postJson<{ run_id: number }>('/api/pipeline/runs', {});
+      setPoke((k) => k + 1);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      setStatus((s) => {
-        const next = { ...s };
-        for (const k of Object.keys(next) as TaskId[]) if (next[k] === 'running') next[k] = 'failed';
-        return next;
-      });
+      // Kept apart from the polled run error, which the next poll would otherwise overwrite.
+      setStartError(e instanceof Error ? e.message : String(e));
     } finally {
-      setHistoryKey((k) => k + 1);
+      setStarting(false);
     }
   }
 
@@ -447,7 +490,7 @@ export function PipelineScreen({
           )}
           <Button
             onClick={() => void run()}
-            disabled={running}
+            disabled={running || starting}
             className="gap-1.5 bg-brand-strong text-brand-foreground hover:bg-brand-strong/90"
           >
             {running ? (
@@ -460,9 +503,9 @@ export function PipelineScreen({
         </div>
       </div>
 
-      {error && (
+      {(startError ?? error) && (
         <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
+          <AlertDescription>{startError ?? error}</AlertDescription>
         </Alert>
       )}
 
