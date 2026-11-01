@@ -37,16 +37,17 @@ import {
 } from '../lib/api';
 
 type State = 'idle' | 'running' | 'done' | 'failed';
-// `hold` is the least time the step stays on screen (the animation totals 45 s); `mins` is the mocked job time we record.
+// `hold` is the least time the step stays on screen (the animation totals 30 s, the medallion steps under 2 s
+// each); `mins` is the mocked job time we record.
 const TASKS: { id: TaskId; label: string; hold: number; mins: number }[] = [
-  { id: 'ingest', label: 'Ingest three sources', hold: 9_000, mins: 4 },
-  { id: 'silver', label: 'Clean, conform and mask', hold: 7_500, mins: 3 },
-  { id: 'gold', label: 'Build the gold position', hold: 7_500, mins: 3 },
-  { id: 'train', label: 'Train and register the forecast', hold: 13_500, mins: 6 },
-  { id: 'publish', label: 'Publish dashboard and agent', hold: 7_500, mins: 2 },
+  { id: 'ingest', label: 'Ingest three sources', hold: 1_500, mins: 4 },
+  { id: 'silver', label: 'Clean, conform and mask', hold: 1_500, mins: 3 },
+  { id: 'gold', label: 'Build the gold position', hold: 1_500, mins: 3 },
+  { id: 'train', label: 'Train and register the forecast', hold: 17_500, mins: 6 },
+  { id: 'publish', label: 'Publish dashboard and agent', hold: 8_000, mins: 2 },
 ];
 const TOTAL_MINS = TASKS.reduce((a, t) => a + t.mins, 0);
-/** Rough server time per task call, taken out of each hold so a whole run still plays in about 45 s. */
+/** Rough server time per task call, taken out of the publish hold so the run still ends at about 30 s. */
 const TASK_CALL_MS = 1_200;
 const IDLE: Record<TaskId, State> = { ingest: 'idle', silver: 'idle', gold: 'idle', train: 'idle', publish: 'idle' };
 
@@ -378,10 +379,17 @@ export function PipelineScreen({
       setHistoryKey((k) => k + 1);
       for (const t of TASKS) {
         setStatus((s) => ({ ...s, [t.id]: 'running' }));
-        // Hold first, then call the task, so the server finishes (and frees the run lock) when the
-        // animation does rather than at the start of the last step.
-        await sleep(Math.max(0, t.hold - TASK_CALL_MS));
-        const out = await postJson<Record<string, unknown>>(`/api/pipeline/runs/${run_id}/${t.id}`, {});
+        const call = () => postJson<Record<string, unknown>>(`/api/pipeline/runs/${run_id}/${t.id}`, {});
+        let out: Record<string, unknown>;
+        if (t.id === 'publish') {
+          // Hold first, then publish, so the server finishes (and frees the run lock) when the animation
+          // does rather than at the start of the last step.
+          await sleep(Math.max(0, t.hold - TASK_CALL_MS));
+          out = await call();
+        } else {
+          // The call and the hold overlap, so a fast medallion step really fills in under 2 s.
+          [out] = await Promise.all([call(), sleep(t.hold)]);
+        }
         setStats((s) => ({ ...s, [t.id]: out }));
         setStatus((s) => ({ ...s, [t.id]: 'done' }));
       }
