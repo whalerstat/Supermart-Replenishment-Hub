@@ -1,6 +1,6 @@
 // client/src/components/ForecastChart.tsx — 4 weeks of actuals, 2 weeks of forecast with a P10–P90
 // band, and the context the decision needs: projected stock and the stock-out day (Signal 1), or
-// last year's line and the purchase-order window (Signal 2). One y-axis (units), plain SVG on the
+// the stock in hand joined to the purchase-order window (Signal 2). One y-axis (units), plain SVG on the
 // theme's series tokens, a legend, a crosshair tooltip, and a table view for screen readers.
 import { useLayoutEffect, useRef, useState, type PointerEvent } from 'react';
 import { cn } from '../lib/utils';
@@ -66,7 +66,13 @@ export function ForecastChart({ signal }: { signal: SignalPayload }) {
     pts.findIndex((p) => p.date === c.today)
   );
   const vals = pts
-    .flatMap((p) => [p.actual, p.p90, c.showStock ? p.stock : undefined, c.showLy ? p.ly : undefined])
+    .flatMap((p) => [
+      p.actual,
+      p.p90,
+      c.showStock ? p.stock : undefined,
+      c.showLy && !c.showStockLevel ? p.ly : undefined,
+      c.showStockLevel ? p.stock_level : undefined,
+    ])
     .filter((v): v is number => v !== undefined);
   const perDay = c.window?.perDay;
   const { max, step: tickStep } = niceScale(Math.max(...vals, perDay ?? 0, 1) * 1.05);
@@ -110,6 +116,14 @@ export function ForecastChart({ signal }: { signal: SignalPayload }) {
   const win = c.window
     ? { a: pts.findIndex((p) => p.date === c.window!.from), b: pts.findIndex((p) => p.date === c.window!.to) }
     : null;
+  // Stock in hand runs up to the order window and meets the "ordered per day" line where the window opens.
+  const stockLevelPath = (() => {
+    if (!c.showStockLevel) return '';
+    const upTo = win && win.a > 0 ? win.a - 1 : pts.length - 1;
+    let d = line((p) => p.stock_level, 0, upTo);
+    if (d && win && win.a >= 0 && perDay !== undefined) d += `L${x(win.a).toFixed(1)},${y(perDay).toFixed(1)}`;
+    return d;
+  })();
   const ticks = Array.from({ length: Math.round(max / tickStep) + 1 }, (_, i) => i * tickStep);
   const labelEvery = W < 520 ? 14 : 7;
 
@@ -132,7 +146,12 @@ export function ForecastChart({ signal }: { signal: SignalPayload }) {
     ...(perDay !== undefined
       ? [{ kind: 'line' as const, cls: 'stroke-brand', label: 'Ordered, per day of the order window' }]
       : []),
-    ...(c.showLy ? [{ kind: 'dash' as const, cls: 'stroke-series-ref', label: 'Last year, same weekday' }] : []),
+    ...(c.showStockLevel
+      ? [{ kind: 'line' as const, cls: 'stroke-series-stock', label: 'Stock (units sold + 15% buffer)' }]
+      : []),
+    ...(c.showLy && !c.showStockLevel
+      ? [{ kind: 'dash' as const, cls: 'stroke-series-ref', label: 'Last year, same weekday' }]
+      : []),
   ];
 
   return (
@@ -212,7 +231,7 @@ export function ForecastChart({ signal }: { signal: SignalPayload }) {
             </g>
           )}
           {band && <path d={band} className="fill-series-demand/20" />}
-          {c.showLy && (
+          {c.showLy && !c.showStockLevel && (
             <path
               d={line((p) => p.ly)}
               fill="none"
@@ -236,6 +255,15 @@ export function ForecastChart({ signal }: { signal: SignalPayload }) {
             strokeLinejoin="round"
             className="stroke-series-demand"
           />
+          {stockLevelPath && (
+            <path
+              d={stockLevelPath}
+              fill="none"
+              strokeWidth={2}
+              strokeLinejoin="round"
+              className="stroke-series-stock"
+            />
+          )}
           {c.showStock && (
             <path d={stepLine((p) => p.stock)} fill="none" strokeWidth={2} className="stroke-series-stock" />
           )}
@@ -305,7 +333,16 @@ export function ForecastChart({ signal }: { signal: SignalPayload }) {
                   strokeWidth={2}
                 />
               )}
-              {c.showLy && hp.ly !== undefined && (
+              {c.showStockLevel && hp.stock_level !== undefined && (
+                <circle
+                  cx={x(hover)}
+                  cy={y(hp.stock_level)}
+                  r={3.5}
+                  className="fill-series-stock stroke-card"
+                  strokeWidth={2}
+                />
+              )}
+              {c.showLy && !c.showStockLevel && hp.ly !== undefined && (
                 <circle cx={x(hover)} cy={y(hp.ly)} r={3.5} className="fill-series-ref stroke-card" strokeWidth={2} />
               )}
             </g>
@@ -335,7 +372,12 @@ export function ForecastChart({ signal }: { signal: SignalPayload }) {
             {c.showStock && hp.stock !== undefined && (
               <TipRow cls="bg-series-stock" label="Stock at close" value={nf(hp.stock)} />
             )}
-            {c.showLy && hp.ly !== undefined && <TipRow cls="bg-series-ref" label="Last year" value={nf(hp.ly)} />}
+            {c.showStockLevel && hp.stock_level !== undefined && (
+              <TipRow cls="bg-series-stock" label="Stock" value={nf(hp.stock_level)} />
+            )}
+            {c.showLy && !c.showStockLevel && hp.ly !== undefined && (
+              <TipRow cls="bg-series-ref" label="Last year" value={nf(hp.ly)} />
+            )}
           </div>
         )}
       </div>
@@ -347,7 +389,8 @@ export function ForecastChart({ signal }: { signal: SignalPayload }) {
             <th>Units sold</th>
             <th>Forecast</th>
             {c.showStock && <th>Projected on hand</th>}
-            {c.showLy && <th>Last year</th>}
+            {c.showStockLevel && <th>Stock (units sold + 15% buffer)</th>}
+            {c.showLy && !c.showStockLevel && <th>Last year</th>}
           </tr>
         </thead>
         <tbody>
@@ -357,7 +400,8 @@ export function ForecastChart({ signal }: { signal: SignalPayload }) {
               <td>{p.actual ?? ''}</td>
               <td>{p.forecast ?? ''}</td>
               {c.showStock && <td>{p.stock ?? ''}</td>}
-              {c.showLy && <td>{p.ly ?? ''}</td>}
+              {c.showStockLevel && <td>{p.stock_level ?? ''}</td>}
+              {c.showLy && !c.showStockLevel && <td>{p.ly ?? ''}</td>}
             </tr>
           ))}
         </tbody>

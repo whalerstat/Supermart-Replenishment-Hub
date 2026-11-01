@@ -37,7 +37,6 @@ import {
   type Rec,
   type RecPayload,
   type Signal,
-  type UiConfig,
 } from '../lib/api';
 import { DriverBars, ForecastChart } from './ForecastChart';
 
@@ -307,17 +306,7 @@ function liveChecks(base: Check[], rec: RecPayload, body: string): Check[] {
 
 const COPILOT_CHIPS = ['Make it shorter', 'Firmer tone', 'Add the delivery date up front'];
 
-function EmailPanel({
-  signal,
-  rec,
-  config,
-  onDecided,
-}: {
-  signal: Signal;
-  rec: Rec | null;
-  config: UiConfig;
-  onDecided: () => void;
-}) {
+function EmailPanel({ signal, rec, onDecided }: { signal: Signal; rec: Rec | null; onDecided: () => void }) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
@@ -491,7 +480,7 @@ function EmailPanel({
         <div className="flex flex-col gap-3 p-4">
           <p className="m-0 flex items-center gap-2 text-sm">
             <Loader2 aria-hidden className="size-4 animate-spin text-brand" />
-            {config.model_service ? 'Claude is drafting through the AI Gateway…' : 'Drafting…'}
+            Preparing the draft…
           </p>
           <Skeleton className="h-8 w-full" />
           <Skeleton className="h-64 w-full" />
@@ -535,9 +524,7 @@ function EmailPanel({
         <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
           <p className="m-0 flex items-start gap-1.5 text-xs text-muted-foreground">
             <Sparkles aria-hidden className="mt-0.5 size-3.5 shrink-0 text-brand" />
-            {draft.source === 'model'
-              ? `Drafted by Claude through the AI Gateway (${draft.model}) in ${(draft.ms / 1000).toFixed(1)} s, from the facts below.`
-              : `Drafted from the agent's template${draft.note ? ` (model not used: ${draft.note})` : ''}.`}
+            Prepared from the facts below. Edit it by hand or ask the copilot.
           </p>
           <div className="grid grid-cols-[44px_minmax(0,1fr)] items-baseline gap-x-2 gap-y-1 text-sm">
             <span className="text-xs text-muted-foreground">To</span>
@@ -688,7 +675,7 @@ function EmailPanel({
             <>
               <p className="m-0 rounded-md bg-secondary px-2.5 py-2 text-xs">
                 <span className="font-semibold">Human in the loop.</span> Nothing leaves until you approve. Your name,
-                the pipeline run and the model version are stamped on the e-mail and the decision log.
+                the run and the model version are stamped on the e-mail and the log.
               </p>
               {rejecting ? (
                 <div className="flex flex-col gap-2">
@@ -726,7 +713,7 @@ function EmailPanel({
                     disabled={busy !== null}
                     className="gap-1.5"
                   >
-                    <RefreshCw aria-hidden className="size-4" /> Redraft
+                    <RefreshCw aria-hidden className="size-4" /> Reset draft
                   </Button>
                   <Button
                     variant="ghost"
@@ -751,15 +738,7 @@ function EmailPanel({
   );
 }
 
-export function DecisionsScreen({
-  config,
-  visits,
-  onOpenPipeline,
-}: {
-  config: UiConfig;
-  visits: number;
-  onOpenPipeline: () => void;
-}) {
+export function DecisionsScreen({ visits, onOpenPipeline }: { visits: number; onOpenPipeline: () => void }) {
   const [refreshKey, setRefreshKey] = useState(0);
   // `visits` changes each time the screen is opened, so a pipeline re-run shows up immediately.
   const data = useJson<Decisions>(`/api/decisions?v=${visits}`, refreshKey);
@@ -778,14 +757,14 @@ export function DecisionsScreen({
         <AlertDescription>{data.error}</AlertDescription>
       </Alert>
     );
-  if (!signal)
+  if (!data.data?.ready || !signal)
     return (
       <div className="flex flex-col items-center gap-3 rounded-xl border bg-card px-6 py-16 text-center">
-        <p className="m-0 text-sm font-medium">No signals yet</p>
+        <h2 className="m-0 text-base font-semibold">No decisions yet</h2>
         <p className="m-0 max-w-sm text-sm text-muted-foreground">
-          Run the pipeline to build the foundation, train the forecast and let the agent look for problems.
+          Run the job on Data pipeline to generate today&apos;s signals.
         </p>
-        <Button onClick={onOpenPipeline}>Go to the pipeline</Button>
+        <Button onClick={onOpenPipeline}>Go to Data pipeline</Button>
       </div>
     );
 
@@ -799,12 +778,12 @@ export function DecisionsScreen({
         <div className="min-w-0 flex-1">
           <h2 className="m-0 text-lg font-semibold leading-tight">Agent Decisions</h2>
           <p className="m-0 text-sm text-muted-foreground">
-            Replenishment agent · business date {dLong(data.data!.as_of)} · pipeline run #{signal.run_id}
+            Business date {dLong(data.data.as_of)} · run #{signal.run_id}
             {model && (
               <>
                 {' '}
-                · forecast model v{model.version}, error {model.metrics.wape}% vs {model.metrics.wape_spreadsheet}% for
-                the spreadsheet
+                · forecast v{model.version}, error {model.metrics.wape}% vs {model.metrics.wape_spreadsheet}% for the
+                spreadsheet
               </>
             )}
           </p>
@@ -931,7 +910,7 @@ export function DecisionsScreen({
         </ol>
 
         <aside className="lg:sticky lg:top-4">
-          <EmailPanel signal={signal} rec={rec} config={config} onDecided={() => setRefreshKey((k) => k + 1)} />
+          <EmailPanel signal={signal} rec={rec} onDecided={() => setRefreshKey((k) => k + 1)} />
         </aside>
       </div>
     </div>
