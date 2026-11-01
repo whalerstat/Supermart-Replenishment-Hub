@@ -7,7 +7,7 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     // tests/ holds the Playwright smoke test (run by `databricks apps validate`), not vitest tests.
-    exclude: ['**/node_modules/**', '**/dist/**', '**/.databricks/**', 'tests/**'],
+    exclude: ['**/node_modules/**', '**/dist/**', '**/.databricks/**', 'tests/**', '.claude/**'],
   },
   resolve: {
     alias: {
