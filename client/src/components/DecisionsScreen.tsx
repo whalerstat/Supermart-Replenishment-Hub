@@ -329,6 +329,7 @@ function EmailPanel({
   const [ask, setAsk] = useState('');
   const [undoBody, setUndoBody] = useState<string | null>(null);
   const [copilotNote, setCopilotNote] = useState<string | null>(null);
+  const askRef = useRef<HTMLInputElement>(null);
   const copilot = useRef<AbortController | null>(null);
 
   async function makeDraft(id: string) {
@@ -351,6 +352,7 @@ function EmailPanel({
     // Null the ref too, so the aborted revise() fails its ownership check and leaves the new rec alone.
     copilot.current?.abort();
     copilot.current = null;
+    setBusy(null);
     setResult(null);
     setRejecting(false);
     setReason('');
@@ -383,6 +385,8 @@ function EmailPanel({
     const ctrl = new AbortController();
     copilot.current = ctrl;
     setBusy('copilot');
+    // A clicked chip is disabled while streaming, which would drop focus to <body>.
+    askRef.current?.focus();
     setCopilotNote(null);
     setUndoBody(before);
     try {
@@ -411,6 +415,7 @@ function EmailPanel({
       if (copilot.current === ctrl) {
         copilot.current = null;
         setBusy(null);
+        askRef.current?.focus();
       }
     }
   }
@@ -576,11 +581,14 @@ function EmailPanel({
               </label>
               <div className="flex gap-2">
                 <Input
+                  ref={askRef}
                   id="copilot-ask"
                   value={ask}
                   onChange={(e) => setAsk(e.target.value)}
                   maxLength={500}
-                  disabled={busy !== null}
+                  // readOnly, not disabled, while streaming so keyboard focus stays here next to Stop.
+                  readOnly={busy === 'copilot'}
+                  disabled={busy !== null && busy !== 'copilot'}
                   placeholder="e.g. Mention the DC pick is already reserved"
                   className="h-8 text-sm"
                 />

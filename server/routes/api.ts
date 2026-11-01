@@ -166,7 +166,9 @@ export function registerRoutes(app: Application): void {
         },
         ctrl.signal
       );
-      if (res.headersSent) res.end();
+      // EOT marks a complete rewrite: a proxy can turn res.destroy() into a clean end, so the client
+      // only trusts a body that ends with it (STREAM_END in client/src/lib/api.ts).
+      if (res.headersSent) res.end('\u0004');
       else res.status(503).json({ error: 'Model returned no text' });
     } catch (err) {
       if (closed) return;

@@ -235,16 +235,25 @@ export async function postStream(
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let text = '';
+  let complete = false;
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    const chunk = decoder.decode(value, { stream: true });
+    let chunk = decoder.decode(value, { stream: true });
+    if (chunk.includes(STREAM_END)) {
+      complete = true;
+      chunk = chunk.replaceAll(STREAM_END, '');
+    }
     if (!chunk) continue;
     text += chunk;
     onText(text);
   }
+  if (!complete) throw new Error('The rewrite was cut off before it finished');
   return text;
 }
+
+/** Sent by the server after the last chunk of a complete stream (see /revise in server/routes/api.ts). */
+const STREAM_END = '\u0004';
 
 async function errorText(res: Response): Promise<string> {
   const t = await res.text();

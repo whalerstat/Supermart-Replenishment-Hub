@@ -106,8 +106,13 @@ export async function completeStream(
     }
     if (ctrl.signal.aborted) throw new Error('Model call aborted');
     // A clean EOF without message_stop (dropped proxy) or a max_tokens cut would pass off a partial e-mail.
-    if (!finished || stopReason === 'max_tokens') throw new Error(`Model stream ended early (${stopReason ?? 'no message_stop'})`);
+    if (!finished || stopReason === 'max_tokens')
+      throw new Error(`Model stream ended early (${stopReason ?? 'no message_stop'})`);
     return out;
+  } catch (err) {
+    // Drop the upstream connection too, or an in-stream error event leaves the gateway socket open.
+    ctrl.abort();
+    throw err;
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener('abort', abort);
