@@ -3,7 +3,7 @@
 // (customer and data insight) → Agent recommendations (two costed options) → Logged. Choosing an
 // option opens the e-mail draft panel: the agent drafts, a planner edits and approves, and only
 // then is the e-mail queued, the order written back to store ordering, and the decision logged.
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   CircleAlert,
   CircleCheck,
@@ -15,16 +15,20 @@ import {
   RefreshCw,
   Send,
   Sparkles,
+  Square,
   Trash2,
   TriangleAlert,
+  Undo2,
   Users,
   X,
 } from 'lucide-react';
 import { Alert, AlertDescription, Badge, Button, Input, Skeleton, Textarea } from '@databricks/appkit-ui/react';
 import { cn } from '../lib/utils';
 import {
+  HttpError,
   dLong,
   postJson,
+  postStream,
   relTime,
   useJson,
   type Check,
@@ -301,6 +305,8 @@ function liveChecks(base: Check[], rec: RecPayload, body: string): Check[] {
   });
 }
 
+const COPILOT_CHIPS = ['Make it shorter', 'Firmer tone', 'Add the delivery date up front'];
+
 function EmailPanel({
   signal,
   rec,
@@ -315,15 +321,20 @@ function EmailPanel({
   const [draft, setDraft] = useState<Draft | null>(null);
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
-  const [busy, setBusy] = useState<'draft' | 'send' | 'reject' | null>(null);
+  const [busy, setBusy] = useState<'draft' | 'send' | 'reject' | 'copilot' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ outbox_id: number; outbox_status: string; write_back: string } | null>(null);
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState('');
+  const [ask, setAsk] = useState('');
+  const [undoBody, setUndoBody] = useState<string | null>(null);
+  const [copilotNote, setCopilotNote] = useState<string | null>(null);
+  const copilot = useRef<AbortController | null>(null);
 
   async function makeDraft(id: string) {
     setBusy('draft');
     setError(null);
+    setUndoBody(null);
     try {
       const d = await postJson<Draft>(`/api/decisions/recs/${encodeURIComponent(id)}/draft`, {});
       setDraft(d);
@@ -337,10 +348,14 @@ function EmailPanel({
   }
 
   useEffect(() => {
+    copilot.current?.abort();
     setResult(null);
     setRejecting(false);
     setReason('');
     setError(null);
+    setAsk('');
+    setUndoBody(null);
+    setCopilotNote(null);
     if (!rec) {
       setDraft(null);
       return;
@@ -355,6 +370,48 @@ function EmailPanel({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rec?.rec_id]);
+
+  useEffect(() => () => copilot.current?.abort(), []);
+
+  // The rewrite replaces the body as it streams, so the live checks rerun on every chunk and approve
+  // sends it like any manual edit.
+  async function revise(instruction: string) {
+    if (!rec || busy !== null || !instruction.trim()) return;
+    const before = body;
+    const ctrl = new AbortController();
+    copilot.current = ctrl;
+    setBusy('copilot');
+    setCopilotNote(null);
+    setUndoBody(before);
+    try {
+      const text = await postStream(
+        `/api/decisions/recs/${encodeURIComponent(rec.rec_id)}/revise`,
+        { subject, body: before, instruction: instruction.trim() },
+        setBody,
+        ctrl.signal
+      );
+      if (text.trim()) setBody(text.trim());
+      else setBody(before);
+      setAsk('');
+    } catch (e) {
+      if (ctrl.signal.aborted) {
+        if (copilot.current === ctrl) setCopilotNote('Stopped. Undo restores the previous text.');
+      } else {
+        setBody(before);
+        setUndoBody(null);
+        setCopilotNote(
+          e instanceof HttpError && e.status === 503
+            ? 'Copilot unavailable. You can keep editing the e-mail by hand.'
+            : `Copilot unavailable (${e instanceof Error ? e.message : String(e)}). You can keep editing by hand.`
+        );
+      }
+    } finally {
+      if (copilot.current === ctrl) {
+        copilot.current = null;
+        setBusy(null);
+      }
+    }
+  }
 
   const checks = useMemo(() => (draft && rec ? liveChecks(draft.checks, rec.payload, body) : []), [draft, rec, body]);
   const blocked = checks.some((c) => c.status === 'fail');
@@ -488,7 +545,7 @@ function EmailPanel({
             <Input
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
-              disabled={rec.status !== 'proposed'}
+              disabled={rec.status !== 'proposed' || busy === 'copilot'}
               className="text-sm text-foreground"
             />
           </label>
@@ -499,9 +556,94 @@ function EmailPanel({
               onChange={(e) => setBody(e.target.value)}
               rows={14}
               disabled={rec.status !== 'proposed'}
+              readOnly={busy === 'copilot'}
+              aria-busy={busy === 'copilot'}
               className="min-h-64 text-sm leading-relaxed text-foreground"
             />
           </label>
+          {rec.status === 'proposed' && (
+            <form
+              className="flex flex-col gap-2 rounded-lg border bg-background p-2.5"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void revise(ask);
+              }}
+            >
+              <label htmlFor="copilot-ask" className="text-xs font-medium">
+                Ask the copilot to adjust this e-mail
+              </label>
+              <div className="flex gap-2">
+                <Input
+                  id="copilot-ask"
+                  value={ask}
+                  onChange={(e) => setAsk(e.target.value)}
+                  maxLength={500}
+                  disabled={busy !== null}
+                  placeholder="e.g. Mention the DC pick is already reserved"
+                  className="h-8 text-sm"
+                />
+                {busy === 'copilot' ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => copilot.current?.abort()}
+                    className="gap-1.5"
+                  >
+                    <Square aria-hidden className="size-3.5" /> Stop
+                  </Button>
+                ) : (
+                  <Button type="submit" size="sm" disabled={busy !== null || !ask.trim()} className="gap-1.5">
+                    <Send aria-hidden className="size-3.5" /> Send
+                  </Button>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {COPILOT_CHIPS.map((chip) => (
+                  <Button
+                    key={chip}
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    disabled={busy !== null}
+                    onClick={() => void revise(chip)}
+                    className="h-7 rounded-full px-2.5 text-xs"
+                  >
+                    {chip}
+                  </Button>
+                ))}
+                {undoBody !== null && busy !== 'copilot' && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      setBody(undoBody);
+                      setUndoBody(null);
+                      setCopilotNote(null);
+                    }}
+                    className="ml-auto h-7 gap-1 px-2 text-xs"
+                  >
+                    <Undo2 aria-hidden className="size-3.5" /> Undo
+                  </Button>
+                )}
+              </div>
+              <p className="m-0 flex items-center gap-1.5 text-[11px] text-muted-foreground" aria-live="polite">
+                {busy === 'copilot' ? (
+                  <Loader2 aria-hidden className="size-3 text-brand motion-safe:animate-spin" />
+                ) : (
+                  <Sparkles aria-hidden className="size-3 text-brand" />
+                )}
+                Copilot · Claude Haiku 5.5 via AI Gateway{busy === 'copilot' ? ' · rewriting…' : ''}
+              </p>
+              {copilotNote && (
+                <p role="status" className="m-0 flex items-start gap-1.5 text-xs text-muted-foreground">
+                  <Info aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+                  {copilotNote}
+                </p>
+              )}
+            </form>
+          )}
           <div>
             <p className="m-0 mb-1 text-xs font-medium">Grounded on</p>
             <ul className="m-0 flex list-none flex-wrap gap-1.5 p-0">
