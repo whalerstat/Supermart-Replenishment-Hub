@@ -671,9 +671,7 @@ export function PipelineScreen({
                   </span>
                   <div className="min-w-0 flex-1">
                     <p className="m-0 text-sm font-semibold leading-tight">Forecasting ML job</p>
-                    <code className="block break-all text-[11px] leading-snug text-muted-foreground">
-                      {config.uc.model}
-                    </code>
+                    <p className="m-0 text-xs leading-snug text-muted-foreground">Many Models Forecasting</p>
                   </div>
                   <StateIcon state={status.train} />
                 </div>

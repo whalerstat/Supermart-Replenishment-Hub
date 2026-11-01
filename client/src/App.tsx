@@ -1,7 +1,7 @@
 // client/src/App.tsx — header + two screens: (1) the governed data foundation pipeline and
-// (2) the Agent Decisions app. Desktop: the logo bar returns to the pipeline. Phone: a bottom bar.
-import { useState } from 'react';
-import { Bot, Moon, RefreshCw, Sun, Workflow, type LucideIcon } from 'lucide-react';
+// (2) the Agent Decisions app. The logo bar returns to the pipeline; on phones Ask Genie sits in a bottom bar.
+import { useEffect, useState } from 'react';
+import { Moon, RefreshCw, Sun } from 'lucide-react';
 import { Alert, AlertDescription, Button, Skeleton, Tabs, TabsContent } from '@databricks/appkit-ui/react';
 import { DatabricksLogo } from './components/DatabricksLogo';
 import { DecisionsScreen } from './components/DecisionsScreen';
@@ -11,10 +11,6 @@ import { postJson, useJson, type UiConfig } from './lib/api';
 import { useTheme } from './lib/theme';
 
 type Tab = 'pipeline' | 'decisions';
-const TABS: { id: Tab; label: string; short: string; icon: LucideIcon }[] = [
-  { id: 'pipeline', label: '1 · Data foundation pipeline', short: 'Pipeline', icon: Workflow },
-  { id: 'decisions', label: '2 · Agent Decisions', short: 'Decisions', icon: Bot },
-];
 
 export default function App() {
   const config = useJson<UiConfig>('/api/config');
@@ -23,6 +19,8 @@ export default function App() {
   const [visits, setVisits] = useState(0);
   const [resetError, setResetError] = useState<string | null>(null);
   const [theme, toggleTheme] = useTheme();
+  // One Genie panel (one conversation): its trigger sits in the header on desktop, in the bottom bar on phones.
+  const wide = useMediaQuery('(min-width: 768px)');
 
   function go(t: Tab) {
     if (t === 'decisions') setVisits((v) => v + 1);
@@ -83,7 +81,7 @@ export default function App() {
             </button>
           </h1>
           <div className="flex shrink-0 items-center gap-1 md:gap-2">
-            <GeniePanel enabled={c.genie_enabled} spaceUrl={c.genie_space_url} />
+            {wide && <GeniePanel enabled={c.genie_enabled} spaceUrl={c.genie_space_url} />}
             {c.reset_enabled && (
               <Button
                 size="icon"
@@ -111,7 +109,7 @@ export default function App() {
       </header>
 
       <Tabs value={tab} onValueChange={(v) => go(v as Tab)}>
-        <main className="px-4 pb-[calc(6rem+env(safe-area-inset-bottom))] pt-4 md:px-6 md:pb-10 md:pt-6">
+        <main className="px-4 pb-[calc(5rem+env(safe-area-inset-bottom))] pt-4 md:px-6 md:pb-10 md:pt-6">
           {resetError && (
             <Alert variant="destructive" className="mb-4">
               <AlertDescription>{resetError}</AlertDescription>
@@ -133,29 +131,22 @@ export default function App() {
         </main>
       </Tabs>
 
-      <nav
-        aria-label="Screens"
-        className="fixed inset-x-0 bottom-0 z-10 grid grid-cols-2 border-t bg-card pb-[env(safe-area-inset-bottom)] md:hidden"
-      >
-        {TABS.map((t) => {
-          const active = tab === t.id;
-          return (
-            <button
-              key={t.id}
-              type="button"
-              aria-current={active ? 'page' : undefined}
-              onClick={() => go(t.id)}
-              className={`relative flex min-h-14 flex-col items-center justify-center gap-0.5 text-[11px] font-medium focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring ${
-                active ? 'text-foreground' : 'text-muted-foreground'
-              }`}
-            >
-              {active && <span aria-hidden className="absolute inset-x-8 top-0 h-0.5 rounded-full bg-brand" />}
-              <t.icon aria-hidden className={`size-5 ${active ? 'text-brand' : ''}`} />
-              {t.short}
-            </button>
-          );
-        })}
-      </nav>
+      {!wide && (
+        <div className="fixed inset-x-0 bottom-0 z-10 border-t bg-card pb-[env(safe-area-inset-bottom)]">
+          <GeniePanel enabled={c.genie_enabled} spaceUrl={c.genie_space_url} placement="bar" />
+        </div>
+      )}
     </div>
   );
+}
+
+function useMediaQuery(query: string): boolean {
+  const [match, setMatch] = useState(() => window.matchMedia(query).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(query);
+    const on = () => setMatch(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, [query]);
+  return match;
 }
