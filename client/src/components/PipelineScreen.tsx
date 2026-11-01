@@ -28,6 +28,7 @@ import {
   nf,
   postJson,
   useJson,
+  type LiveSync,
   type PipelineHistory,
   type PipelineRun,
   type RunStats,
@@ -339,10 +340,13 @@ export function PipelineScreen({
   config,
   onOpenDecisions,
   onRunComplete,
+  onSync,
 }: {
   config: UiConfig;
   onOpenDecisions: () => void;
   onRunComplete?: () => void;
+  /** Each poll's shared view, so the app can mirror Screen 2 across devices. */
+  onSync?: (sync: LiveSync) => void;
 }) {
   const [status, setStatus] = useState<Record<TaskId, State>>(IDLE);
   const [stats, setStats] = useState<RunStats>({});
@@ -378,9 +382,11 @@ export function PipelineScreen({
   const [startError, setStartError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const onDone = useRef(onRunComplete);
+  const onShared = useRef(onSync);
   useEffect(() => {
     onDone.current = onRunComplete;
-  }, [onRunComplete]);
+    onShared.current = onSync;
+  }, [onRunComplete, onSync]);
   const [poke, setPoke] = useState(0);
   useEffect(() => {
     let alive = true;
@@ -391,8 +397,9 @@ export function PipelineScreen({
         // A hung request must not stall the loop, so each poll gives up after 5 s.
         const r = await fetch('/api/pipeline/live', { signal: AbortSignal.timeout(5_000) });
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const { live, epoch } = (await r.json()) as { live: LiveRun | null; epoch: number };
+        const { live, epoch, ...sync } = (await r.json()) as { live: LiveRun | null; epoch: number } & LiveSync;
         if (!alive) return;
+        onShared.current?.(sync);
         if (lastEpoch.current !== null && epoch !== lastEpoch.current) {
           setHistoryKey((k) => k + 1);
           onDone.current?.();

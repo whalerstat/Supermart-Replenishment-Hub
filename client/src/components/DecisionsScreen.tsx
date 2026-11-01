@@ -37,6 +37,8 @@ import {
   type Rec,
   type RecPayload,
   type Signal,
+  type SharedView,
+  type ViewPatch,
 } from '../lib/api';
 import { DriverBars, ForecastChart } from './ForecastChart';
 
@@ -306,7 +308,19 @@ function liveChecks(base: Check[], rec: RecPayload, body: string): Check[] {
 
 const COPILOT_CHIPS = ['Make it shorter', 'Firmer tone', 'Add the delivery date up front'];
 
-function EmailPanel({ signal, rec, onDecided }: { signal: Signal; rec: Rec | null; onDecided: () => void }) {
+function EmailPanel({
+  signal,
+  rec,
+  remote,
+  share,
+  onDecided,
+}: {
+  signal: Signal;
+  rec: Rec | null;
+  remote: SharedView | null;
+  share: (patch: ViewPatch) => void;
+  onDecided: () => void;
+}) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
@@ -363,6 +377,41 @@ function EmailPanel({ signal, rec, onDecided }: { signal: Signal; rec: Rec | nul
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rec?.rec_id]);
+
+  // Mirror the draft across devices. Text that arrived from another device is remembered in `applied` so it
+  // is not sent straight back; local edits (typing, copilot streaming, undo) go out at most every 400 ms.
+  const applied = useRef<{ subject: string; body: string } | null>(null);
+  const sendTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latest = useRef<{ subject: string; body: string; recId: string } | null>(null);
+  useEffect(() => {
+    if (!rec || !remote || remote.draftRec !== rec.rec_id || remote.body === null) return;
+    // Our own unsent edit is newer than whatever the other device last wrote.
+    if (sendTimer.current) return;
+    const next = { subject: remote.subject ?? subject, body: remote.body };
+    applied.current = next;
+    setSubject(next.subject);
+    setBody(next.body);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [remote, rec?.rec_id, draft]);
+  useEffect(() => {
+    if (!rec || rec.status !== 'proposed' || !draft) return;
+    const a = applied.current;
+    if (a && a.subject === subject && a.body === body) return;
+    latest.current = { subject, body, recId: rec.rec_id };
+    if (sendTimer.current) return;
+    sendTimer.current = setTimeout(() => {
+      sendTimer.current = null;
+      const l = latest.current;
+      if (l) share({ draftRec: l.recId, subject: l.subject, body: l.body });
+    }, 400);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subject, body]);
+  useEffect(
+    () => () => {
+      if (sendTimer.current) clearTimeout(sendTimer.current);
+    },
+    []
+  );
 
   useEffect(() => () => copilot.current?.abort(), []);
 
@@ -734,12 +783,32 @@ function EmailPanel({ signal, rec, onDecided }: { signal: Signal; rec: Rec | nul
   );
 }
 
-export function DecisionsScreen({ visits, onOpenPipeline }: { visits: number; onOpenPipeline: () => void }) {
+export function DecisionsScreen({
+  visits,
+  remote,
+  share,
+  onOpenPipeline,
+}: {
+  visits: number;
+  /** The view mirrored from other devices; its signal and recommendation are applied when it changes. */
+  remote: SharedView | null;
+  share: (patch: ViewPatch) => void;
+  onOpenPipeline: () => void;
+}) {
   const [refreshKey, setRefreshKey] = useState(0);
   // `visits` changes each time the screen is opened, so a pipeline re-run shows up immediately.
   const data = useJson<Decisions>(`/api/decisions?v=${visits}`, refreshKey);
   const [sel, setSel] = useState(0);
   const [recId, setRecId] = useState<string | null>(null);
+  // A new mirrored view (another device picked a signal or recommendation) replaces the local selection.
+  const [seenRemote, setSeenRemote] = useState(remote);
+  if (remote !== seenRemote) {
+    setSeenRemote(remote);
+    if (remote) {
+      setSel(remote.signal);
+      setRecId(remote.recId);
+    }
+  }
 
   const signals = data.data?.signals ?? [];
   const signal = signals[Math.min(sel, Math.max(signals.length - 1, 0))];
@@ -798,8 +867,10 @@ export function DecisionsScreen({ visits, onOpenPipeline }: { visits: number; on
             i={i}
             selected={s.signal_id === signal.signal_id}
             onSelect={() => {
+              const next = s.recs.find((r) => r.status === 'approved')?.rec_id ?? null;
               setSel(i);
-              setRecId(s.recs.find((r) => r.status === 'approved')?.rec_id ?? null);
+              setRecId(next);
+              share({ signal: i, recId: next });
             }}
           />
         ))}
@@ -883,7 +954,15 @@ export function DecisionsScreen({ visits, onOpenPipeline }: { visits: number; on
           >
             <div className="grid gap-3 2xl:grid-cols-2">
               {signal.recs.map((r) => (
-                <RecCard key={r.rec_id} rec={r} selected={r.rec_id === recId} onSelect={() => setRecId(r.rec_id)} />
+                <RecCard
+                  key={r.rec_id}
+                  rec={r}
+                  selected={r.rec_id === recId}
+                  onSelect={() => {
+                    setRecId(r.rec_id);
+                    share({ recId: r.rec_id });
+                  }}
+                />
               ))}
             </div>
           </Entry>
@@ -910,7 +989,13 @@ export function DecisionsScreen({ visits, onOpenPipeline }: { visits: number; on
         </ol>
 
         <aside className="lg:sticky lg:top-4">
-          <EmailPanel signal={signal} rec={rec} onDecided={() => setRefreshKey((k) => k + 1)} />
+          <EmailPanel
+            signal={signal}
+            rec={rec}
+            remote={remote}
+            share={share}
+            onDecided={() => setRefreshKey((k) => k + 1)}
+          />
         </aside>
       </div>
     </div>

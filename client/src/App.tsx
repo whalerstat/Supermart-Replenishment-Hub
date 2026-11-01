@@ -1,13 +1,13 @@
 // client/src/App.tsx — header + two screens: (1) the governed data foundation pipeline and
 // (2) the Agent Decisions app. The logo bar returns to the pipeline; on phones Ask Genie sits in a bottom bar.
-import { useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { Moon, RefreshCw, Sun } from 'lucide-react';
 import { Alert, AlertDescription, Button, Skeleton, Tabs, TabsContent } from '@databricks/appkit-ui/react';
 import { DatabricksLogo } from './components/DatabricksLogo';
 import { DecisionsScreen } from './components/DecisionsScreen';
 import { GeniePanel } from './components/GeniePanel';
 import { PipelineScreen } from './components/PipelineScreen';
-import { postJson, useJson, type UiConfig } from './lib/api';
+import { postJson, useJson, type LiveSync, type SharedView, type UiConfig, type ViewPatch } from './lib/api';
 import { useTheme } from './lib/theme';
 
 type Tab = 'pipeline' | 'decisions';
@@ -19,10 +19,47 @@ export default function App() {
   const [visits, setVisits] = useState(0);
   const [resetError, setResetError] = useState<string | null>(null);
   const [theme, toggleTheme] = useTheme();
+  const [remote, setRemote] = useState<SharedView | null>(null);
+  // Mirror bookkeeping: the newest view version applied or written here, the server boot it belongs to,
+  // writes still in flight (a poll answered mid-write could carry an older draft) and the decisions version.
+  const sync = useRef({ v: -1, boot: 0, pending: 0, dv: null as number | null, tab: 'pipeline' as Tab });
+
+  const share = useCallback((patch: ViewPatch) => {
+    const s = sync.current;
+    s.pending++;
+    postJson<{ v: number }>('/api/view', patch)
+      .then(({ v }) => {
+        s.v = Math.max(s.v, v);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        s.pending--;
+      });
+  }, []);
+
+  const onSync = useCallback((r: LiveSync) => {
+    const s = sync.current;
+    if (r.boot !== s.boot) {
+      s.boot = r.boot;
+      s.v = -1;
+    }
+    if (s.dv !== null && r.dv !== s.dv) setVisits((v) => v + 1);
+    s.dv = r.dv;
+    if (s.pending > 0 || r.view.v <= s.v) return;
+    s.v = r.view.v;
+    setRemote(r.view);
+    if (r.view.tab !== s.tab) {
+      s.tab = r.view.tab;
+      if (r.view.tab === 'decisions') setVisits((v) => v + 1);
+      setTab(r.view.tab);
+    }
+  }, []);
 
   function go(t: Tab) {
     if (t === 'decisions') setVisits((v) => v + 1);
+    sync.current.tab = t;
     setTab(t);
+    share({ tab: t });
     window.scrollTo({ top: 0 });
   }
 
@@ -124,10 +161,17 @@ export default function App() {
               onOpenDecisions={() => go('decisions')}
               // Bumping visits refetches Agent Decisions even when it is already the open tab.
               onRunComplete={() => setVisits((v) => v + 1)}
+              onSync={onSync}
             />
           </TabsContent>
           <TabsContent value="decisions" forceMount className="mt-0 data-[state=inactive]:hidden">
-            <DecisionsScreen key={epoch} visits={visits} onOpenPipeline={() => go('pipeline')} />
+            <DecisionsScreen
+              key={epoch}
+              visits={visits}
+              remote={remote}
+              share={share}
+              onOpenPipeline={() => go('pipeline')}
+            />
           </TabsContent>
         </main>
       </Tabs>
