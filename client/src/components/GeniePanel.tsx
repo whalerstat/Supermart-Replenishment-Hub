@@ -23,28 +23,14 @@ const SAMPLE_QUESTIONS = [
   'Which outbox messages were queued, and to whom?',
 ];
 
-type Placement = 'header' | 'bar';
-
-function Shell({
-  spaceUrl,
-  placement,
-  children,
-}: {
-  spaceUrl: string | null;
-  placement: Placement;
-  children: ReactNode;
-}) {
+function Shell({ spaceUrl, children }: { spaceUrl: string | null; children: ReactNode }) {
   return (
     <Sheet>
       <SheetTrigger asChild>
         <Button
-          variant={placement === 'bar' ? 'ghost' : 'outline'}
+          variant="outline"
           size="sm"
-          className={
-            placement === 'bar'
-              ? 'min-h-14 w-full gap-1.5 rounded-none text-sm font-medium'
-              : 'min-h-11 gap-1.5 md:min-h-8'
-          }
+          className="gap-1.5 max-md:min-h-14 max-md:w-full max-md:rounded-none max-md:border-0 max-md:text-sm md:min-h-8"
         >
           <Sparkles aria-hidden className="size-4 text-brand" />
           Ask Genie
@@ -75,14 +61,14 @@ function Shell({
   );
 }
 
-function GenieEnabled({ spaceUrl, placement }: { spaceUrl: string | null; placement: Placement }) {
+function GenieEnabled({ spaceUrl }: { spaceUrl: string | null }) {
   const { messages, status, error, sendMessage, reset, hasPreviousPage, fetchPreviousPage } = useGenieChat({
     alias: 'default',
   });
   const busy = status === 'streaming' || status === 'loading-history';
 
   return (
-    <Shell spaceUrl={spaceUrl} placement={placement}>
+    <Shell spaceUrl={spaceUrl}>
       <div className="flex flex-wrap items-center gap-2 border-b px-4 py-3">
         {SAMPLE_QUESTIONS.map((q) => (
           <Button
@@ -118,9 +104,9 @@ function GenieEnabled({ spaceUrl, placement }: { spaceUrl: string | null; placem
   );
 }
 
-function GenieDisabled({ placement }: { placement: Placement }) {
+function GenieDisabled() {
   return (
-    <Shell spaceUrl={null} placement={placement}>
+    <Shell spaceUrl={null}>
       <p className="m-0 p-4 text-sm text-muted-foreground">
         Genie is not configured for this deployment. Create the space with <code>scripts/build-genie-space.mjs</code>{' '}
         and set <code>DATABRICKS_GENIE_SPACE_ID</code> to enable it.
@@ -129,14 +115,6 @@ function GenieDisabled({ placement }: { placement: Placement }) {
   );
 }
 
-export function GeniePanel({
-  enabled,
-  spaceUrl,
-  placement = 'header',
-}: {
-  enabled: boolean;
-  spaceUrl: string | null;
-  placement?: Placement;
-}) {
-  return enabled ? <GenieEnabled spaceUrl={spaceUrl} placement={placement} /> : <GenieDisabled placement={placement} />;
+export function GeniePanel({ enabled, spaceUrl }: { enabled: boolean; spaceUrl: string | null }) {
+  return enabled ? <GenieEnabled spaceUrl={spaceUrl} /> : <GenieDisabled />;
 }

@@ -258,14 +258,22 @@ export function registerRoutes(app: Application): void {
       res.status(403).json({ error: 'set DEMO_ALLOW_RESET=true in app.yaml to enable' });
       return;
     }
-    // Hold the run lock while the schema is dropped and re-seeded, so no run starts on half-built tables.
-    activeRun = { id: -1, lastSeen: Date.now() };
+    if (runBusy()) {
+      res.status(409).json({ error: busyMessage() });
+      return;
+    }
+    // Hold the run lock while the schema is dropped and re-seeded, so no run or second reset starts on
+    // half-built tables. Release only our own claim: the lock may have expired and been taken since.
+    const claim = { id: -1, lastSeen: Date.now() };
+    activeRun = claim;
+    const keepAlive = setInterval(() => (claim.lastSeen = Date.now()), 10_000);
     try {
       res.json({ result: await bootstrap(true) });
     } catch (err) {
       fail(res, err);
     } finally {
-      activeRun = null;
+      clearInterval(keepAlive);
+      if (activeRun === claim) activeRun = null;
     }
   });
 }

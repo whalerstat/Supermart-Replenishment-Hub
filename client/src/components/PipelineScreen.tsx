@@ -345,6 +345,11 @@ export function PipelineScreen({
   const [runId, setRunId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [historyKey, setHistoryKey] = useState(0);
+  const history = useJson<PipelineHistory>('/api/pipeline/history', historyKey);
+  // The screen tabs are gone, so after a reload this button is the only way to decisions an earlier run made.
+  const decisionsReady = Boolean(
+    history.data?.runs.some((r) => r.triggered_by !== 'schedule' && r.status === 'succeeded')
+  );
 
   const running = Object.values(status).includes('running');
 
@@ -737,13 +742,15 @@ export function PipelineScreen({
                   </div>
                   <StateIcon state={status.publish} />
                 </div>
-                {stats.publish && (
+                {(stats.publish || (decisionsReady && !running)) && (
                   <div className="rise-in mt-2 flex flex-col gap-2">
-                    <p className="m-0 text-xs">
-                      <span className="font-semibold tabular-nums">{stats.publish.signals}</span> signals ·{' '}
-                      <span className="font-semibold tabular-nums">{stats.publish.recommendations}</span>{' '}
-                      recommendations
-                    </p>
+                    {stats.publish && (
+                      <p className="m-0 text-xs">
+                        <span className="font-semibold tabular-nums">{stats.publish.signals}</span> signals ·{' '}
+                        <span className="font-semibold tabular-nums">{stats.publish.recommendations}</span>{' '}
+                        recommendations
+                      </p>
+                    )}
                     <Button size="sm" onClick={onOpenDecisions} className="gap-1.5">
                       Open Agent Decisions <ArrowRight aria-hidden className="size-4" />
                     </Button>
@@ -757,7 +764,7 @@ export function PipelineScreen({
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
         <RunLog status={status} stats={stats} />
-        <RunHistory refreshKey={historyKey} />
+        <RunHistory data={history.data} error={history.error} />
       </div>
     </div>
   );
@@ -827,8 +834,7 @@ function RunStatus({ status }: { status: PipelineRun['status'] }) {
   );
 }
 
-function RunHistory({ refreshKey }: { refreshKey: number }) {
-  const { data, error } = useJson<PipelineHistory>('/api/pipeline/history', refreshKey);
+function RunHistory({ data, error }: { data: PipelineHistory | null; error: string | null }) {
   const runs = data?.runs ?? [];
   return (
     <section aria-labelledby="history" className="rounded-xl border bg-card p-4">

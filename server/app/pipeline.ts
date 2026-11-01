@@ -322,6 +322,11 @@ export async function runTask(runId: number, task: TaskId): Promise<Stats> {
 
 /** Newest first: the seeded scheduled runs and every run started from the app. */
 export async function runHistory(limit = 6): Promise<HistoryRun[]> {
+  // A run whose browser went away never reaches publish; once it is well past a full run, call it failed.
+  await sql(
+    `UPDATE ${S}.pipeline_runs SET status = 'failed', finished_at = now()
+     WHERE status = 'running' AND started_at < now() - interval '5 minutes'`
+  );
   const rows = await sql(
     `SELECT run_id, status, triggered_by, stats->>'seeded' AS seeded,
             to_char(started_at AT TIME ZONE 'Asia/Singapore', 'YYYY-MM-DD') AS sgt_date,

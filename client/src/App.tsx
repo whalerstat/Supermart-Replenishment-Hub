@@ -1,6 +1,6 @@
 // client/src/App.tsx — header + two screens: (1) the governed data foundation pipeline and
 // (2) the Agent Decisions app. The logo bar returns to the pipeline; on phones Ask Genie sits in a bottom bar.
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Moon, RefreshCw, Sun } from 'lucide-react';
 import { Alert, AlertDescription, Button, Skeleton, Tabs, TabsContent } from '@databricks/appkit-ui/react';
 import { DatabricksLogo } from './components/DatabricksLogo';
@@ -19,8 +19,6 @@ export default function App() {
   const [visits, setVisits] = useState(0);
   const [resetError, setResetError] = useState<string | null>(null);
   const [theme, toggleTheme] = useTheme();
-  // One Genie panel (one conversation): its trigger sits in the header on desktop, in the bottom bar on phones.
-  const wide = useMediaQuery('(min-width: 768px)');
 
   function go(t: Tab) {
     if (t === 'decisions') setVisits((v) => v + 1);
@@ -81,7 +79,10 @@ export default function App() {
             </button>
           </h1>
           <div className="flex shrink-0 items-center gap-1 md:gap-2">
-            {wide && <GeniePanel enabled={c.genie_enabled} spaceUrl={c.genie_space_url} />}
+            {/* One Genie panel, never remounted: on phones its wrapper is pinned as the bottom bar. */}
+            <div className="max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:z-10 max-md:border-t max-md:bg-card max-md:pb-[env(safe-area-inset-bottom)]">
+              <GeniePanel enabled={c.genie_enabled} spaceUrl={c.genie_space_url} />
+            </div>
             {c.reset_enabled && (
               <Button
                 size="icon"
@@ -130,23 +131,6 @@ export default function App() {
           </TabsContent>
         </main>
       </Tabs>
-
-      {!wide && (
-        <div className="fixed inset-x-0 bottom-0 z-10 border-t bg-card pb-[env(safe-area-inset-bottom)]">
-          <GeniePanel enabled={c.genie_enabled} spaceUrl={c.genie_space_url} placement="bar" />
-        </div>
-      )}
     </div>
   );
-}
-
-function useMediaQuery(query: string): boolean {
-  const [match, setMatch] = useState(() => window.matchMedia(query).matches);
-  useEffect(() => {
-    const mq = window.matchMedia(query);
-    const on = () => setMatch(mq.matches);
-    mq.addEventListener('change', on);
-    return () => mq.removeEventListener('change', on);
-  }, [query]);
-  return match;
 }
