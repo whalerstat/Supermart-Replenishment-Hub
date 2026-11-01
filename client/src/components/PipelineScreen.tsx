@@ -692,7 +692,7 @@ export function PipelineScreen({ config, onOpenDecisions }: { config: UiConfig; 
                   <div className="rise-in mt-2 grid grid-cols-2 gap-1.5">
                     <Tile label="In stock, 14 days" value={`${dash.projected_in_stock}%`} />
                     <Tile label="SKU-stores at risk" value={nf(dash.at_risk)} tone="bad" />
-                    <Tile label="Sales at risk" value={moneyK(dash.lost_sales_7d)} tone="bad" />
+                    <Tile label="Sales at risk" value={moneyK(dash.lost_sales_14d)} tone="bad" />
                     <Tile label="Fresh waste risk" value={moneyK(dash.fresh_waste_risk)} tone="bad" />
                   </div>
                 )}

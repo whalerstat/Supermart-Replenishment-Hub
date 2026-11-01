@@ -18,7 +18,7 @@ import {
 
 const SAMPLE_QUESTIONS = [
   'Which stores have the most flagged stock-out signals?',
-  'Compare the 7-day forecast with on-hand stock for the lowest days of cover',
+  'Compare the 14-day forecast with on-hand stock for the lowest days of cover',
   'How many recommendations were approved, rejected or are still proposed?',
   'Which outbox messages were queued, and to whom?',
 ];

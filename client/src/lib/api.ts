@@ -32,7 +32,7 @@ export interface Expectation {
 export interface Dashboard {
   projected_in_stock: number;
   at_risk: number;
-  lost_sales_7d: number;
+  lost_sales_14d: number;
   fresh_waste_risk: number;
   open_fresh_orders: number;
   stores: { store_id: string; store: string; at_risk: number; lost_sales: number; waste_risk: number }[];
