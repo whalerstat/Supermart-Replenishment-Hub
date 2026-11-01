@@ -10,7 +10,6 @@ import {
   CircleCheck,
   Database,
   ExternalLink,
-  Layers,
   LayoutDashboard,
   Loader2,
   Lock,
@@ -38,16 +37,9 @@ import {
   type UiConfig,
 } from '../lib/api';
 
-const SHORT: Record<string, string> = {
-  managed_postgres: 'Managed Postgres',
-  managed_relational: 'Lakehouse',
-  saas_stock_api: 'Stock API',
-  saas_customer_api: 'Customer API',
-};
-
 type State = 'idle' | 'running' | 'done' | 'failed';
 const TASKS: { id: TaskId; label: string; min: number }[] = [
-  { id: 'ingest', label: 'Ingest four sources into bronze', min: 2400 },
+  { id: 'ingest', label: 'Ingest three sources into bronze', min: 2400 },
   { id: 'silver', label: 'Clean, conform and mask into silver', min: 1900 },
   { id: 'gold', label: 'Build the gold replenishment position', min: 1600 },
   { id: 'train', label: 'Train, backtest and register the forecast', min: 2400 },
@@ -55,36 +47,37 @@ const TASKS: { id: TaskId; label: string; min: number }[] = [
 ];
 const IDLE: Record<TaskId, State> = { ingest: 'idle', silver: 'idle', gold: 'idle', train: 'idle', publish: 'idle' };
 
-const SOURCES: { system: string; title: string; subtitle: string; kind: string; icon: LucideIcon }[] = [
-  {
-    system: 'managed_postgres',
-    title: 'Managed Postgres',
-    subtitle: 'Lakebase · POS sales and store orders',
-    kind: 'Change feed',
-    icon: Database,
-  },
-  {
-    system: 'managed_relational',
-    title: 'Managed relational databases',
-    subtitle: 'Lakehouse · ERP, sales history, promotions, agreements',
-    kind: 'Federated',
-    icon: Layers,
-  },
-  {
-    system: 'saas_stock_api',
-    title: 'Stock levels API',
-    subtitle: 'SaaS inventory platform · counts every 4 h',
-    kind: 'Real-time API',
-    icon: PackageSearch,
-  },
-  {
-    system: 'saas_customer_api',
-    title: 'Customer behaviour API',
-    subtitle: 'SaaS customer data platform · travel bookings',
-    kind: 'Real-time API',
-    icon: Plane,
-  },
-];
+// The server still ingests the Postgres and relational systems separately; the diagram shows them as one raw source.
+const SOURCES: { systems: string[]; title: string; short: string; subtitle: string; kind: string; icon: LucideIcon }[] =
+  [
+    {
+      systems: ['managed_postgres', 'managed_relational'],
+      title: 'Raw source',
+      short: 'Raw source',
+      subtitle:
+        'Store POS sales, store orders, ERP products, stores and suppliers, sales history, promotions, supplier agreements',
+      kind: 'Databases',
+      icon: Database,
+    },
+    {
+      systems: ['saas_stock_api'],
+      title: 'SaaS API · stock levels',
+      short: 'Stock API',
+      subtitle: 'SaaS inventory platform · counts every 4 h',
+      kind: 'Real-time API',
+      icon: PackageSearch,
+    },
+    {
+      systems: ['saas_customer_api'],
+      title: 'SaaS API · customer behaviour',
+      short: 'Customer API',
+      subtitle: 'SaaS customer data platform · travel bookings',
+      kind: 'Real-time API',
+      icon: Plane,
+    },
+  ];
+
+const APP_TABLES = ['agent_signals', 'agent_recommendations', 'decision_log', 'outbox'];
 
 function useFlowPaths(
   container: RefObject<HTMLDivElement | null>,
@@ -120,9 +113,9 @@ function useFlowPaths(
     const out: Record<string, string> = {};
     const f = box('foundation');
     const ml = box('ml');
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < SOURCES.length; i++) {
       const s = box(`src${i}`);
-      if (s && f) out[`src${i}`] = curve({ x: s.r, y: s.cy }, { x: f.l, y: f.t + 56 + i * 10 });
+      if (s && f) out[`src${i}`] = curve({ x: s.r, y: s.cy }, { x: f.l, y: f.t + 56 + i * 12 });
     }
     if (f && ml) out.ml = curve({ x: f.r, y: f.t + 56 }, { x: ml.l, y: ml.cy });
     for (const k of ['dash', 'app']) {
@@ -242,6 +235,42 @@ function Medallion({
   );
 }
 
+function SyncConnector({ state }: { state: State }) {
+  const label = state === 'running' ? 'Syncing' : state === 'done' ? 'Synced' : 'Not synced yet';
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-6">
+      <svg aria-hidden width="10" height="34" viewBox="0 0 10 34" className="shrink-0 overflow-visible">
+        <path
+          d="M5 0 V26 M1 22 L5 30 L9 22"
+          fill="none"
+          strokeWidth={2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeDasharray={state === 'idle' ? '3 5' : undefined}
+          className={cn(
+            state === 'idle' && 'stroke-border',
+            state === 'running' && 'flow-active stroke-brand',
+            state === 'done' && 'stroke-success',
+            state === 'failed' && 'stroke-destructive'
+          )}
+        />
+      </svg>
+      <span
+        role="status"
+        aria-label={`Synced table, continuous: ${label}`}
+        className={cn(
+          'rounded-full border px-2 py-0.5 text-xs font-semibold',
+          state === 'done' ? 'border-success/40 text-success' : 'text-muted-foreground',
+          state === 'running' && 'border-brand text-brand-text'
+        )}
+      >
+        Synced table · continuous
+      </span>
+      <span className="text-xs text-muted-foreground">Gold and forecast synced to Postgres for the app</span>
+    </div>
+  );
+}
+
 function Tile({ label, value, tone }: { label: string; value: string; tone?: 'bad' | 'good' }) {
   return (
     <div className="rounded-md border bg-background px-2 py-1.5">
@@ -277,15 +306,14 @@ export function PipelineScreen({ config, onOpenDecisions }: { config: UiConfig; 
   const src0 = useRef<HTMLDivElement>(null);
   const src1 = useRef<HTMLDivElement>(null);
   const src2 = useRef<HTMLDivElement>(null);
-  const src3 = useRef<HTMLDivElement>(null);
   const foundationRef = useRef<HTMLDivElement>(null);
   const mlRef = useRef<HTMLDivElement>(null);
   const dashRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<HTMLDivElement>(null);
-  const srcRefs = [src0, src1, src2, src3];
+  const srcRefs = [src0, src1, src2];
   const { paths, size } = useFlowPaths(
     container,
-    { src0, src1, src2, src3, foundation: foundationRef, ml: mlRef, dash: dashRef, app: appRef },
+    { src0, src1, src2, foundation: foundationRef, ml: mlRef, dash: dashRef, app: appRef },
     [status, stats]
   );
 
@@ -319,7 +347,10 @@ export function PipelineScreen({ config, onOpenDecisions }: { config: UiConfig; 
   }
 
   const ingest = stats.ingest;
-  const srcRows = (system: string) => ingest?.sources.find((s) => s.system === system)?.rows;
+  const srcRows = (systems: string[]) => {
+    const found = ingest?.sources.filter((s) => systems.includes(s.system)) ?? [];
+    return found.length ? found.reduce((a, s) => a + s.rows, 0) : undefined;
+  };
   const edge = (task: TaskId): State => status[task];
   const elapsed = started ? ((finished ?? now) - started) / 1000 : 0;
   const allDone = status.publish === 'done';
@@ -333,8 +364,8 @@ export function PipelineScreen({ config, onOpenDecisions }: { config: UiConfig; 
         <div className="min-w-0 flex-1">
           <h2 className="m-0 text-lg font-semibold leading-tight">Governed data foundation pipeline</h2>
           <p className="m-0 text-sm text-muted-foreground">
-            Lakeflow job <code className="text-xs">supermart_replenishment_daily</code> · four sources into one governed
-            foundation, then the forecast, the dashboard and the agent
+            Lakeflow job <code className="text-xs">supermart_replenishment_daily</code> · three sources into one
+            governed foundation, then the forecast, the dashboard and the agent
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -382,8 +413,8 @@ export function PipelineScreen({ config, onOpenDecisions }: { config: UiConfig; 
           width={size.w}
           height={size.h}
         >
-          {[0, 1, 2, 3].map((i) => (
-            <Edge key={i} d={paths[`src${i}`]} state={edge('ingest')} />
+          {SOURCES.map((s, i) => (
+            <Edge key={s.short} d={paths[`src${i}`]} state={edge('ingest')} />
           ))}
           <Edge d={paths.ml} state={edge('train')} />
           <Edge d={paths.dash} state={edge('publish')} />
@@ -397,9 +428,9 @@ export function PipelineScreen({ config, onOpenDecisions }: { config: UiConfig; 
             <div className="flex flex-col gap-3">
               {SOURCES.map((s, i) => {
                 const st: State =
-                  status.ingest === 'idle' ? 'idle' : srcRows(s.system) !== undefined ? 'done' : status.ingest;
+                  status.ingest === 'idle' ? 'idle' : srcRows(s.systems) !== undefined ? 'done' : status.ingest;
                 return (
-                  <Node key={s.system} nodeRef={srcRefs[i]} state={st}>
+                  <Node key={s.short} nodeRef={srcRefs[i]} state={st}>
                     <div className="flex items-start gap-2.5">
                       <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-secondary">
                         <s.icon aria-hidden className="size-4" />
@@ -411,10 +442,10 @@ export function PipelineScreen({ config, onOpenDecisions }: { config: UiConfig; 
                     </div>
                     <div className="mt-2 flex items-center justify-between gap-2 text-xs">
                       <span className="rounded bg-secondary px-1.5 py-0.5 text-[11px] font-medium">{s.kind}</span>
-                      {srcRows(s.system) !== undefined ? (
+                      {srcRows(s.systems) !== undefined ? (
                         <span className="flex items-center gap-1 font-medium tabular-nums">
                           <CircleCheck aria-hidden className="size-3.5 text-success" />
-                          {nf(srcRows(s.system)!)} rows
+                          {nf(srcRows(s.systems)!)} rows
                         </span>
                       ) : status.ingest === 'running' ? (
                         <span className="text-muted-foreground">Reading…</span>
@@ -448,94 +479,171 @@ export function PipelineScreen({ config, onOpenDecisions }: { config: UiConfig; 
                 </div>
               </div>
 
-              {status.ingest === 'idle' ? (
-                <div className="flex flex-1 flex-col items-center justify-center gap-1 rounded-lg border border-dashed px-4 py-8 text-center">
-                  <p className="m-0 text-sm font-medium">Empty</p>
-                  <p className="m-0 max-w-64 text-xs text-muted-foreground">
-                    Run the job to land the four sources and build the bronze, silver and gold tables.
+              <div
+                className={cn(
+                  'flex flex-1 flex-col gap-2 rounded-lg border bg-card p-3',
+                  status.ingest === 'idle' && 'border-dashed'
+                )}
+              >
+                <div className="flex flex-wrap items-baseline justify-between gap-x-2">
+                  <p className="m-0 text-sm font-semibold">
+                    Managed relational databases{' '}
+                    <span className="font-normal text-muted-foreground">· Databricks Lakehouse</span>
                   </p>
+                  <span className="text-xs font-semibold text-muted-foreground">
+                    {status.ingest === 'idle' ? 'Empty' : status.gold === 'done' ? 'Ready' : 'Building'}
+                  </span>
                 </div>
-              ) : (
-                <div className="flex flex-col gap-2">
-                  <Medallion tier="Bronze" table={config.uc.bronze} rows={ingest?.rows} state={status.ingest}>
-                    <p className="m-0 mb-1">Raw JSON as received, tagged with its source and load time</p>
-                    <ul className="m-0 grid list-none gap-x-3 gap-y-0.5 p-0 sm:grid-cols-2">
-                      {ingest?.sources.map((s) => (
-                        <li key={s.system} className="flex justify-between gap-2">
-                          <span>{SHORT[s.system] ?? s.label}</span>
-                          <span className="tabular-nums text-foreground">{nf(s.rows)}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </Medallion>
-                  <Medallion tier="Silver" table={config.uc.silver} rows={stats.silver?.rows} state={status.silver}>
-                    <ul className="m-0 grid list-none gap-0.5 p-0">
-                      {stats.silver?.expectations.map((e) => (
-                        <li key={e.rule} className="flex items-start gap-1">
-                          {e.failed > 0 ? (
-                            <CircleAlert aria-label="Rows caught" className="mt-0.5 size-3 shrink-0 text-warning" />
-                          ) : (
-                            <CircleCheck aria-label="Passed" className="mt-0.5 size-3 shrink-0 text-success" />
-                          )}
-                          <span>
-                            {e.rule}
+                {status.ingest === 'idle' ? (
+                  <div className="flex flex-1 flex-col items-center justify-center gap-1 rounded-lg border border-dashed px-4 py-8 text-center">
+                    <p className="m-0 text-sm font-medium">Empty</p>
+                    <p className="m-0 max-w-64 text-xs text-muted-foreground">
+                      Run the job to land the three sources and build the bronze, silver and gold tables.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    <Medallion tier="Bronze" table={config.uc.bronze} rows={ingest?.rows} state={status.ingest}>
+                      <p className="m-0 mb-1">Raw JSON as received, tagged with its source and load time</p>
+                      <ul className="m-0 grid list-none gap-x-3 gap-y-0.5 p-0 sm:grid-cols-2">
+                        {SOURCES.map((s) => (
+                          <li key={s.short} className="flex justify-between gap-2">
+                            <span>{s.short}</span>
+                            <span className="tabular-nums text-foreground">{nf(srcRows(s.systems) ?? 0)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </Medallion>
+                    <Medallion tier="Silver" table={config.uc.silver} rows={stats.silver?.rows} state={status.silver}>
+                      <ul className="m-0 grid list-none gap-0.5 p-0">
+                        {stats.silver?.expectations.map((e) => (
+                          <li key={e.rule} className="flex items-start gap-1">
                             {e.failed > 0 ? (
-                              <span className="text-foreground">
-                                {' '}
-                                · {nf(e.failed)} {e.action.charAt(0).toLowerCase() + e.action.slice(1)}
-                              </span>
+                              <CircleAlert aria-label="Rows caught" className="mt-0.5 size-3 shrink-0 text-warning" />
                             ) : (
-                              <span> · {e.action}</span>
+                              <CircleCheck aria-label="Passed" className="mt-0.5 size-3 shrink-0 text-success" />
                             )}
-                          </span>
-                        </li>
+                            <span>
+                              {e.rule}
+                              {e.failed > 0 ? (
+                                <span className="text-foreground">
+                                  {' '}
+                                  · {nf(e.failed)} {e.action.charAt(0).toLowerCase() + e.action.slice(1)}
+                                </span>
+                              ) : (
+                                <span> · {e.action}</span>
+                              )}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </Medallion>
+                    <Medallion tier="Gold" table={config.uc.gold} rows={stats.gold?.rows} state={status.gold}>
+                      {stats.gold?.grain}. Also{' '}
+                      {stats.gold?.related.map((r, i) => (
+                        <span key={r.table}>
+                          {i > 0 && ' and '}
+                          <code>{r.table.split('.').pop()}</code> ({nf(r.rows)})
+                        </span>
                       ))}
-                    </ul>
-                  </Medallion>
-                  <Medallion tier="Gold" table={config.uc.gold} rows={stats.gold?.rows} state={status.gold}>
-                    {stats.gold?.grain}. Also{' '}
-                    {stats.gold?.related.map((r, i) => (
-                      <span key={r.table}>
-                        {i > 0 && ' and '}
-                        <code>{r.table.split('.').pop()}</code> ({nf(r.rows)})
+                      .
+                    </Medallion>
+                    {status.gold === 'done' && (
+                      <div className="rise-in grid gap-2 border-t pt-2 text-xs sm:grid-cols-3">
+                        <p className="m-0 flex items-start gap-1.5">
+                          <Network aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+                          <span>
+                            <span className="font-semibold">Lineage</span>
+                            <span className="text-muted-foreground">
+                              {' '}
+                              captured source → bronze → silver → gold, to the column
+                            </span>
+                          </span>
+                        </p>
+                        <p className="m-0 flex items-start gap-1.5">
+                          <CircleCheck aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+                          <span>
+                            <span className="font-semibold">Quality</span>
+                            <span className="text-muted-foreground">
+                              {' '}
+                              {stats.silver?.expectations.length} expectations, {stats.silver?.quarantined} rows
+                              quarantined
+                            </span>
+                          </span>
+                        </p>
+                        <p className="m-0 flex items-start gap-1.5">
+                          <Lock aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+                          <span>
+                            <span className="font-semibold">Access</span>
+                            <span className="text-muted-foreground"> row filter by store, member identity masked</span>
+                          </span>
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {status.train !== 'idle' && (
+                  <div
+                    className={cn(
+                      'rise-in rounded-lg border bg-card p-3',
+                      status.train === 'running' && 'border-brand'
+                    )}
+                  >
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span aria-hidden className="size-3 shrink-0 rounded-full bg-brand ring-2 ring-card" />
+                      <span className="text-xs font-semibold uppercase tracking-wide">Forecast</span>
+                      <code className="min-w-0 truncate text-xs text-muted-foreground">{config.uc.model}</code>
+                      <span className="ml-auto text-sm font-semibold tabular-nums">
+                        {train ? (
+                          <>
+                            {nf(train.forecast_rows)}
+                            <span className="text-xs font-normal text-muted-foreground"> forecasts</span>
+                          </>
+                        ) : (
+                          <Loader2 aria-label="Training" className="size-4 animate-spin text-brand" />
+                        )}
                       </span>
-                    ))}
-                    .
-                  </Medallion>
-                  {status.gold === 'done' && (
-                    <div className="rise-in grid gap-2 border-t pt-2 text-xs sm:grid-cols-3">
-                      <p className="m-0 flex items-start gap-1.5">
-                        <Network aria-hidden className="mt-0.5 size-3.5 shrink-0" />
-                        <span>
-                          <span className="font-semibold">Lineage</span>
-                          <span className="text-muted-foreground">
-                            {' '}
-                            captured source → bronze → silver → gold, to the column
-                          </span>
-                        </span>
-                      </p>
-                      <p className="m-0 flex items-start gap-1.5">
-                        <CircleCheck aria-hidden className="mt-0.5 size-3.5 shrink-0" />
-                        <span>
-                          <span className="font-semibold">Quality</span>
-                          <span className="text-muted-foreground">
-                            {' '}
-                            {stats.silver?.expectations.length} expectations, {stats.silver?.quarantined} rows
-                            quarantined
-                          </span>
-                        </span>
-                      </p>
-                      <p className="m-0 flex items-start gap-1.5">
-                        <Lock aria-hidden className="mt-0.5 size-3.5 shrink-0" />
-                        <span>
-                          <span className="font-semibold">Access</span>
-                          <span className="text-muted-foreground"> row filter by store, member identity masked</span>
-                        </span>
-                      </p>
                     </div>
-                  )}
+                  </div>
+                )}
+              </div>
+
+              <SyncConnector state={status.publish} />
+
+              <div
+                className={cn(
+                  'flex flex-col gap-2 rounded-lg border bg-card p-3',
+                  status.publish !== 'done' && 'border-dashed'
+                )}
+              >
+                <div className="flex flex-wrap items-baseline justify-between gap-x-2">
+                  <p className="m-0 text-sm font-semibold">
+                    Managed Postgres <span className="font-normal text-muted-foreground">· Databricks Lakebase</span>
+                  </p>
+                  <span
+                    className={cn(
+                      'text-xs font-semibold',
+                      status.publish === 'done' ? 'text-success' : 'text-muted-foreground'
+                    )}
+                  >
+                    {status.publish === 'done' ? 'Synced' : 'Not synced'}
+                  </span>
                 </div>
-              )}
+                <p className="m-0 text-xs text-muted-foreground">
+                  Low-latency tables the Agent Decisions app reads and writes
+                </p>
+                {status.publish === 'done' ? (
+                  <ul className="rise-in m-0 flex list-none flex-wrap gap-1.5 p-0">
+                    {APP_TABLES.map((t) => (
+                      <li key={t} className="rounded-md border px-2 py-0.5 font-mono text-xs">
+                        {t}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="m-0 text-xs text-muted-foreground">Waiting for the first sync</p>
+                )}
+              </div>
             </div>
           </div>
 
@@ -654,8 +762,7 @@ export function PipelineScreen({ config, onOpenDecisions }: { config: UiConfig; 
 }
 
 function summary(task: TaskId, stats: RunStats): string {
-  if (task === 'ingest' && stats.ingest)
-    return `${nf(stats.ingest.rows)} rows from ${stats.ingest.sources.length} sources`;
+  if (task === 'ingest' && stats.ingest) return `${nf(stats.ingest.rows)} rows from ${SOURCES.length} sources`;
   if (task === 'silver' && stats.silver)
     return `${nf(stats.silver.rows)} rows · ${stats.silver.duplicates} duplicates dropped · ${stats.silver.quarantined} quarantined · ${nf(stats.silver.masked)} identities masked`;
   if (task === 'gold' && stats.gold)
@@ -704,7 +811,7 @@ function Governance({ stats, status, config }: { stats: RunStats; status: Record
       icon: Network,
       title: 'Lineage',
       lines: [
-        `4 sources → ${config.uc.bronze.split('.').slice(1).join('.')} → ${config.uc.silver.split('.').slice(1).join('.')} → ${config.uc.gold.split('.').slice(1).join('.')}`,
+        `${SOURCES.length} sources → ${config.uc.bronze.split('.').slice(1).join('.')} → ${config.uc.silver.split('.').slice(1).join('.')} → ${config.uc.gold.split('.').slice(1).join('.')}`,
         '→ forecast model → dashboard and Agent Decisions; every agent figure traces back to a source row',
       ],
     },
