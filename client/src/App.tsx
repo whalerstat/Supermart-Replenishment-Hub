@@ -15,6 +15,7 @@ import {
 } from '@databricks/appkit-ui/react';
 import { DatabricksLogo } from './components/DatabricksLogo';
 import { DecisionsScreen } from './components/DecisionsScreen';
+import { GeniePanel } from './components/GeniePanel';
 import { PipelineScreen } from './components/PipelineScreen';
 import { getJson, postJson, useJson, type UiConfig } from './lib/api';
 import { useTheme } from './lib/theme';
@@ -85,6 +86,7 @@ export default function App() {
             <Badge variant="secondary" className="hidden max-w-56 truncate md:inline-flex">
               {me?.email ?? 'Signed in'}
             </Badge>
+            <GeniePanel enabled={c.genie_enabled} spaceUrl={c.genie_space_url} />
             {c.reset_enabled && (
               <Button
                 size="icon"
