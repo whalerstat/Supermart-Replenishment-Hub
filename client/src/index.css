@@ -1,0 +1,154 @@
+@import '@databricks/appkit-ui/styles.css';
+
+/*
+ * Databricks brand layer over the AppKit tokens. Light: oat canvas, white surfaces, navy ink.
+ * Dark: navy canvas and surfaces, oat ink. Lava #FF3621 marks identity and wayfinding (logo, active
+ * tab, thread nodes, focus); it is 3.4-3.6:1 on light grounds, so text-bearing fills use
+ * --brand-strong and red text uses --brand-text. Chart and state colours stay AppKit's.
+ */
+:root {
+  --brand: #ff3621;
+  --brand-strong: #d92b10;
+  --brand-foreground: #ffffff;
+  --brand-text: #c92a0f;
+
+  --background: #f9f7f4;
+  --foreground: #0b2026;
+  --card: #ffffff;
+  --card-foreground: #0b2026;
+  --popover: #ffffff;
+  --popover-foreground: #0b2026;
+  --primary: #0b2026;
+  --primary-foreground: #f9f7f4;
+  --secondary: #eeede9;
+  --secondary-foreground: #0b2026;
+  --muted: #eeede9;
+  --muted-foreground: #5b6a71;
+  --accent: #eeede9;
+  --accent-foreground: #0b2026;
+  --border: #e2dfd8;
+  --input: #d9d5cd;
+  --ring: #ff3621;
+
+  /* Chart series (validated with the dataviz palette checker against #ffffff and #14303a). */
+  --series-demand: #2463eb;
+  --series-stock: #1f9e74;
+  --series-driver: #ab47bd;
+  --series-ref: #7a868c;
+
+  /* Medallion identity (labels always accompany the colour). */
+  --medal-bronze: #a8693a;
+  --medal-silver: #8c969d;
+  --medal-gold: #c99a17;
+}
+
+/* :root.dark, not .dark: AppKit's own OS-dark rule is :root:not(.light), which would outrank a bare class. */
+:root.dark {
+  --brand-text: #ff6b55;
+
+  --background: #0b2026;
+  --foreground: #f9f7f4;
+  --card: #14303a;
+  --card-foreground: #f9f7f4;
+  --popover: #14303a;
+  --popover-foreground: #f9f7f4;
+  --primary: #f9f7f4;
+  --primary-foreground: #0b2026;
+  --secondary: #1b3a45;
+  --secondary-foreground: #f9f7f4;
+  --muted: #1b3a45;
+  --muted-foreground: #9dabb1;
+  --accent: #1b3a45;
+  --accent-foreground: #f9f7f4;
+  --border: rgb(249 247 244 / 12%);
+  --input: rgb(249 247 244 / 18%);
+  --ring: #ff3621;
+
+  --series-demand: #4f8bf0;
+  --series-stock: #22a77c;
+  --series-driver: #b066c2;
+  --series-ref: #8d9ba1;
+
+  --medal-bronze: #c4824f;
+  --medal-silver: #a9b3b9;
+  --medal-gold: #d9ad2b;
+}
+
+@theme inline {
+  --color-brand: var(--brand);
+  --color-brand-strong: var(--brand-strong);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-text: var(--brand-text);
+  --color-series-demand: var(--series-demand);
+  --color-series-stock: var(--series-stock);
+  --color-series-driver: var(--series-driver);
+  --color-series-ref: var(--series-ref);
+  --color-medal-bronze: var(--medal-bronze);
+  --color-medal-silver: var(--medal-silver);
+  --color-medal-gold: var(--medal-gold);
+}
+
+/* Pipeline motion: data "flows" along an active connector; a running node breathes. */
+@keyframes flow-dash {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+@keyframes node-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--brand) 35%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 6px color-mix(in oklab, var(--brand) 0%, transparent);
+  }
+}
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.flow-active {
+  stroke-dasharray: 6 6;
+  animation: flow-dash 0.6s linear infinite;
+}
+.node-running {
+  animation: node-breathe 1.4s ease-in-out infinite;
+}
+.rise-in {
+  animation: rise-in 0.45s ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .flow-active,
+  .node-running,
+  .rise-in {
+    animation: none;
+  }
+  [data-slot='sheet-overlay'],
+  [data-slot='sheet-content'] {
+    animation: none;
+    transition: none;
+  }
+}
+
+/* AppKit's base gives every <p> a fixed 28px line height; let paragraphs follow their text size. */
+@layer base {
+  p {
+    line-height: inherit;
+  }
+}
+
+::selection {
+  background: color-mix(in oklab, var(--brand) 22%, transparent);
+  color: var(--foreground);
+}
+
+html {
+  caret-color: var(--brand);
+  scrollbar-color: color-mix(in oklab, var(--foreground) 25%, transparent) transparent;
+}

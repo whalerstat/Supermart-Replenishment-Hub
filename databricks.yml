@@ -1,0 +1,52 @@
+bundle:
+  name: supermart-replenishment-hub
+
+variables:
+  postgres_branch:
+    description: Lakebase branch resource name
+  postgres_database:
+    description: Lakebase database resource name
+  model_service:
+    description: Unity AI Gateway model service (catalog.schema.service) that drafts the e-mails (Claude Haiku 5.5)
+  genie_space_id:
+    description: Genie space over the app's mock tables (scripts/build-genie-space.mjs prints the id)
+
+resources:
+  apps:
+    app:
+      name: "supermart-replenishment-hub"
+      description: "Supermart Replenishment Hub: governed pipeline + Agent Decisions (mock data)"
+      source_code_path: ./
+      lifecycle:
+        started: true          # deploy also starts the app
+      user_api_scopes:         # Genie runs on behalf of the signed-in user
+        - genie
+      resources:
+        - name: postgres
+          postgres:
+            branch: ${var.postgres_branch}
+            database: ${var.postgres_database}
+            permission: CAN_CONNECT_AND_CREATE
+        - name: model
+          uc_securable:
+            securable_type: MODEL_SERVICE
+            permission: EXECUTE
+            securable_full_name: ${var.model_service}
+        - name: genie-space
+          genie_space:
+            name: genie-space
+            space_id: ${var.genie_space_id}
+            permission: CAN_RUN
+
+targets:
+  default:
+    default: true
+    workspace:
+      profile: BenV
+    variables:
+      # Same Lakebase project and model service as exec-insight-console; this app uses its own schema
+      # (supermart_replen), owned by this app's service principal.
+      postgres_branch: projects/retail-demos/branches/production
+      postgres_database: projects/retail-demos/branches/production/databases/databricks-postgres
+      model_service: workspace.ai_gateway.haiku55
+      genie_space_id: 01f1d5d3b68510518581c8791a8fd563

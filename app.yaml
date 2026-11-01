@@ -1,0 +1,17 @@
+command: ["pnpm", "run", "start"]
+env:
+  - name: LAKEBASE_ENDPOINT
+    valueFrom: postgres
+  - name: MODEL_SERVICE                    # Claude via the Unity AI Gateway: drafts the store-manager e-mail
+    valueFrom: model
+  - name: DATABRICKS_GENIE_SPACE_ID        # Ask Genie panel (both screens)
+    valueFrom: genie-space
+  - name: DEMO_BOOTSTRAP                   # only the deployed app may create + seed the schema
+    value: "true"
+  - name: DEMO_ALLOW_RESET                 # shows the "Reset demo" button in the header
+    value: "true"
+  - name: GENIE_READER_ROLES               # Postgres roles granted read on the schema so Genie can query it
+    value: "benadityan@gmail.com"
+  # Optional: point the "Insights dashboard" node at a real AI/BI dashboard in your workspace.
+  # - name: DASHBOARD_URL
+  #   value: "https://<your-workspace>/dashboardsv3/<dashboard-id>"
