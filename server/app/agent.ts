@@ -1103,6 +1103,44 @@ export async function draftEmail(recId: string): Promise<Record<string, unknown>
   return draft;
 }
 
+export const REVISE_SYSTEM = `You are the e-mail copilot for Supermart's replenishment planning team. A planner asks you to adjust a draft e-mail to a store manager.
+Rules:
+- Rewrite the current body according to the planner's instruction, and change nothing else in substance.
+- Use only the facts provided. Never invent numbers, dates, people or products.
+- Keep every order line, quantity, date, price and clause id (e.g. [NPK-4.2]) unless the instruction explicitly changes them. Order lines stay one per line, starting with "- ".
+- Never include customer names, e-mail addresses or member ids.
+- Keep the sign-off "Replenishment planning".
+Return only the new body text: no subject line, no preamble, no quotes, no markdown fences.`;
+
+/** The copilot's user turn: the recommendation's governed facts, the current e-mail, and the instruction. */
+export function revisePrompt(
+  sig: SignalPayload,
+  rec: RecPayload,
+  clauses: Record<string, unknown>[],
+  draft: { subject: string; body: string; instruction: string }
+): string {
+  return [
+    `Facts (the only facts you may use):\n${promptFor(sig, rec, clauses)}`,
+    `Current subject: ${draft.subject}`,
+    `Current body:\n<<<\n${draft.body}\n>>>`,
+    `Planner's instruction: ${draft.instruction}`,
+  ].join('\n\n');
+}
+
+/** Grounds a copilot rewrite on this recommendation's facts in Lakebase; null when the rec is unknown. */
+export async function reviseContext(
+  recId: string,
+  draft: { subject: string; body: string; instruction: string }
+): Promise<string | null> {
+  const r = await loadRec(recId);
+  if (!r) return null;
+  const clauses = await sql(
+    `SELECT clause_id, clause_title, body FROM ${S}.gold_knowledge_clauses WHERE clause_id = ANY($1::text[])`,
+    [r.rec.clause_ids]
+  );
+  return revisePrompt(r.signal, r.rec, clauses, draft);
+}
+
 export async function approve(recId: string, subject: string, body: string, actor: string) {
   const r = await loadRec(recId);
   if (!r) return { status: 404 as const, error: 'Recommendation not found' };

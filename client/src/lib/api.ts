@@ -207,6 +207,43 @@ export async function postJson<T>(url: string, body: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
+/** A non-2xx reply; `status` lets callers tell "service unavailable" (503) from other failures. */
+export class HttpError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+/** POSTs JSON and reads a plain-text streamed reply, calling onText with the text so far. */
+export async function postStream(
+  url: string,
+  body: unknown,
+  onText: (textSoFar: string) => void,
+  signal?: AbortSignal
+): Promise<string> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!res.ok || !res.body) throw new HttpError(res.status, await errorText(res));
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let text = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const chunk = decoder.decode(value, { stream: true });
+    if (!chunk) continue;
+    text += chunk;
+    onText(text);
+  }
+  return text;
+}
+
 async function errorText(res: Response): Promise<string> {
   const t = await res.text();
   try {

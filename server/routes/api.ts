@@ -1,14 +1,14 @@
 // server/routes/api.ts — HTTP surface for the two screens.
 //   Screen 1 (pipeline):  POST /api/pipeline/runs, POST /api/pipeline/runs/:id/:task, GET /api/pipeline/latest
-//   Screen 2 (decisions): GET /api/decisions, POST /api/decisions/recs/:id/{draft|approve|reject}
+//   Screen 2 (decisions): GET /api/decisions, POST /api/decisions/recs/:id/{draft|revise|approve|reject}
 import type { Application, Request, Response } from 'express';
 import { z } from 'zod';
-import { approve, draftEmail, getDecisions, reject } from '../app/agent';
+import { REVISE_SYSTEM, approve, draftEmail, getDecisions, reject, reviseContext } from '../app/agent';
 import { TASKS, latestRun, runTask, startRun, type TaskId } from '../app/pipeline';
 import { AS_OF, SCHEMA as S, UC } from '../app/scenario';
 import { bootstrap } from '../lib/bootstrap';
 import { sql } from '../lib/db';
-import { modelService } from '../lib/llm';
+import { completeStream, modelService } from '../lib/llm';
 
 function who(req: Request): string {
   return req.header('x-forwarded-email') ?? req.header('x-forwarded-user') ?? 'local-dev';
@@ -20,6 +20,11 @@ function fail(res: Response, err: unknown): void {
 }
 
 const ApproveBody = z.object({ subject: z.string().min(3).max(300), body: z.string().min(20).max(6000) });
+const ReviseBody = z.object({
+  subject: z.string().max(300),
+  body: z.string().min(1).max(6000),
+  instruction: z.string().trim().min(1).max(500),
+});
 const RejectBody = z.object({ reason: z.string().max(500).optional() });
 
 /** One pipeline run at a time: a second click while a run is going gets a 409. */
@@ -108,6 +113,58 @@ export function registerRoutes(app: Application): void {
       else res.json(draft);
     } catch (err) {
       fail(res, err);
+    }
+  });
+
+  // Streams the copilot's rewrite of the body as plain text chunks. 503 means no text was produced, so
+  // the client keeps the planner's draft and manual editing.
+  app.post('/api/decisions/recs/:id/revise', async (req, res) => {
+    const parsed = ReviseBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'body and an instruction (1-500 characters) are required' });
+      return;
+    }
+    if (!modelService()) {
+      res.status(503).json({ error: 'MODEL_SERVICE is not set' });
+      return;
+    }
+    const ctrl = new AbortController();
+    let closed = false;
+    // 'close' also fires after a normal end, when aborting is a no-op.
+    res.on('close', () => {
+      closed = true;
+      ctrl.abort();
+    });
+    try {
+      const prompt = await reviseContext(String(req.params.id), parsed.data);
+      if (!prompt) {
+        res.status(404).json({ error: 'Recommendation not found' });
+        return;
+      }
+      await completeStream(
+        REVISE_SYSTEM,
+        prompt,
+        (text) => {
+          if (!res.headersSent) {
+            res.status(200).set({
+              'Content-Type': 'text/plain; charset=utf-8',
+              'Cache-Control': 'no-cache',
+              'X-Accel-Buffering': 'no',
+            });
+            res.flushHeaders();
+          }
+          res.write(text);
+        },
+        ctrl.signal
+      );
+      if (res.headersSent) res.end();
+      else res.status(503).json({ error: 'Model returned no text' });
+    } catch (err) {
+      if (closed) return;
+      console.error('[api] revise', err);
+      // Mid-stream there is no status left to change: cut the connection so the client sees a failure.
+      if (res.headersSent) res.destroy();
+      else res.status(503).json({ error: err instanceof Error ? err.message : String(err) });
     }
   });
 
