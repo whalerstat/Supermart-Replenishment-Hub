@@ -32,5 +32,37 @@ export async function bootstrap(force = false): Promise<'seeded' | 'kept' | 'ski
     console.error('[demo] bootstrap failed:', err);
     if (force) throw err;
     return 'kept';
+  } finally {
+    await grantReaders();
+  }
+}
+
+/**
+ * Genie queries the schema through the Lakebase catalog as the signed-in user, but the schema is owned
+ * by the app's service principal, so each reader's Postgres role needs USAGE + SELECT. GENIE_READER_ROLES
+ * is a comma-separated list of Postgres role names (a Databricks user's role is their e-mail).
+ */
+async function grantReaders(): Promise<void> {
+  const roles = (process.env.GENIE_READER_ROLES ?? '')
+    .split(',')
+    .map((r) => r.trim())
+    .filter(Boolean);
+  for (const role of roles) {
+    try {
+      const [found] = await sql(`SELECT 1 FROM pg_roles WHERE rolname = $1`, [role]);
+      if (!found) {
+        console.warn(`[demo] Postgres role ${role} not found; skipped Genie read grant`);
+        continue;
+      }
+      const r = `"${role.replace(/"/g, '""')}"`;
+      await exec(
+        `GRANT USAGE ON SCHEMA ${SCHEMA} TO ${r};
+         GRANT SELECT ON ALL TABLES IN SCHEMA ${SCHEMA} TO ${r};
+         ALTER DEFAULT PRIVILEGES IN SCHEMA ${SCHEMA} GRANT SELECT ON TABLES TO ${r};`
+      );
+      console.log(`[demo] granted read on ${SCHEMA} to ${role}`);
+    } catch (err) {
+      console.error(`[demo] Genie read grant for ${role} failed:`, err);
+    }
   }
 }
