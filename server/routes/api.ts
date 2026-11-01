@@ -1,4 +1,5 @@
 // server/routes/api.ts — HTTP surface for the two screens.
+//   Shared view:          GET /api/pipeline/live (also returns the view), POST /api/view
 //   Screen 1 (pipeline):  POST /api/pipeline/runs, GET /api/pipeline/live, GET /api/pipeline/latest,
 //                         GET /api/pipeline/history
 //   Screen 2 (decisions): GET /api/decisions, POST /api/decisions/recs/:id/{draft|revise|approve|reject}
@@ -69,6 +70,30 @@ let live: LiveRun | null = null;
  * (polls failed, tab asleep, other device) still refreshes its history and decisions.
  */
 let epoch = 0;
+
+/**
+ * The view every open screen mirrors (desktop and phone): which screen, signal and recommendation are open
+ * and the draft being edited. Last writer wins. `v` orders changes; `boot` tells clients the server restarted.
+ */
+const ViewPatch = z.object({
+  tab: z.enum(['pipeline', 'decisions']).optional(),
+  signal: z.number().int().min(0).max(50).optional(),
+  recId: z.string().max(80).nullable().optional(),
+  draftRec: z.string().max(80).nullable().optional(),
+  subject: z.string().max(300).nullable().optional(),
+  body: z.string().max(6000).nullable().optional(),
+});
+type View = Required<z.infer<typeof ViewPatch>> & { v: number };
+const VIEW0: Omit<View, 'v'> = { tab: 'pipeline', signal: 0, recId: null, draftRec: null, subject: null, body: null };
+let view: View = { ...VIEW0, v: 0 };
+const BOOT = Date.now();
+/** Bumped when a decision is recorded, so every screen refetches Agent Decisions. */
+let decisionsVersion = 0;
+
+function decided(): void {
+  decisionsVersion++;
+  view = { ...view, draftRec: null, subject: null, body: null, v: view.v + 1 };
+}
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -189,7 +214,17 @@ export function registerRoutes(app: Application): void {
 
   // Every open screen (desktop and phone) polls this and plays the same run.
   app.get('/api/pipeline/live', (_req, res) => {
-    res.json({ live, epoch });
+    res.json({ live, epoch, view, dv: decisionsVersion, boot: BOOT });
+  });
+
+  app.post('/api/view', (req, res) => {
+    const parsed = ViewPatch.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: 'invalid view' });
+      return;
+    }
+    view = { ...view, ...parsed.data, v: view.v + 1 };
+    res.json({ view, boot: BOOT });
   });
 
   // ── Screen 2 ──
@@ -277,6 +312,7 @@ export function registerRoutes(app: Application): void {
     }
     try {
       const out = await approve(String(req.params.id), parsed.data.subject, parsed.data.body, who(req));
+      if (out.status < 300) decided();
       res.status(out.status).json(out);
     } catch (err) {
       fail(res, err);
@@ -291,6 +327,7 @@ export function registerRoutes(app: Application): void {
     const parsed = RejectBody.safeParse(req.body ?? {});
     try {
       const out = await reject(String(req.params.id), parsed.success ? (parsed.data.reason ?? '') : '', who(req));
+      if (out.status < 300) decided();
       res.status(out.status).json(out);
     } catch (err) {
       fail(res, err);
@@ -328,6 +365,8 @@ export function registerRoutes(app: Application): void {
     activeRun = claim;
     const keepAlive = setInterval(() => (claim.lastSeen = Date.now()), 10_000);
     live = null;
+    view = { ...VIEW0, v: view.v + 1 };
+    decisionsVersion++;
     try {
       res.json({ result: await bootstrap(true) });
     } catch (err) {

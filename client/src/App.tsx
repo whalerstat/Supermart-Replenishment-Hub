@@ -1,13 +1,13 @@
 // client/src/App.tsx — header + two screens: (1) the governed data foundation pipeline and
 // (2) the Agent Decisions app. The logo bar returns to the pipeline; on phones Ask Genie sits in a bottom bar.
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Moon, RefreshCw, Sun } from 'lucide-react';
 import { Alert, AlertDescription, Button, Skeleton, Tabs, TabsContent } from '@databricks/appkit-ui/react';
 import { DatabricksLogo } from './components/DatabricksLogo';
 import { DecisionsScreen } from './components/DecisionsScreen';
 import { GeniePanel } from './components/GeniePanel';
 import { PipelineScreen } from './components/PipelineScreen';
-import { postJson, useJson, type UiConfig } from './lib/api';
+import { postJson, useJson, type LiveSync, type SharedView, type UiConfig, type ViewPatch } from './lib/api';
 import { useTheme } from './lib/theme';
 
 type Tab = 'pipeline' | 'decisions';
@@ -19,10 +19,102 @@ export default function App() {
   const [visits, setVisits] = useState(0);
   const [resetError, setResetError] = useState<string | null>(null);
   const [theme, toggleTheme] = useTheme();
+  const [remote, setRemote] = useState<SharedView | null>(null);
+  // Mirror bookkeeping: the newest view version applied here, the server boot it belongs to, the decisions
+  // version, and an outbox of local changes not yet acknowledged. Writes go one at a time, newest merged in,
+  // so the server sees this device's changes in order; a failed write is kept and retried.
+  const sync = useRef({
+    v: -1,
+    boot: 0,
+    dv: null as number | null,
+    tab: 'pipeline' as Tab,
+    outbox: null as ViewPatch | null,
+    inflight: false,
+  });
+
+  const apply = useCallback((view: SharedView) => {
+    const s = sync.current;
+    s.v = view.v;
+    setRemote(view);
+    if (view.tab !== s.tab) {
+      s.tab = view.tab;
+      if (view.tab === 'decisions') setVisits((v) => v + 1);
+      setTab(view.tab);
+    }
+  }, []);
+
+  // flush re-runs itself (next queued change, retry); it reaches itself through a ref so it stays stable.
+  const again = useRef<() => void>(() => undefined);
+  const flush = useCallback(() => {
+    const s = sync.current;
+    if (s.inflight || !s.outbox) return;
+    const sent = s.outbox;
+    s.outbox = null;
+    s.inflight = true;
+    fetch('/api/view', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(sent),
+      signal: AbortSignal.timeout(5_000),
+    })
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const { view, boot } = (await r.json()) as { view: SharedView; boot: number };
+        s.inflight = false;
+        // An answer from a server that has since restarted says nothing about the current one.
+        if (boot !== s.boot && s.boot !== 0) {
+          if (s.outbox) again.current();
+          return;
+        }
+        s.boot = boot;
+        // With nothing newer queued, take the whole accepted view: it also carries other devices' changes.
+        if (!s.outbox) apply(view);
+        else {
+          s.v = Math.max(s.v, view.v);
+          again.current();
+        }
+      })
+      .catch(() => {
+        // Keep the unsent change (newer edits win) and try again shortly.
+        s.inflight = false;
+        s.outbox = { ...sent, ...s.outbox };
+        setTimeout(() => again.current(), 1_000);
+      });
+  }, [apply]);
+
+  useEffect(() => {
+    again.current = flush;
+  }, [flush]);
+
+  const share = useCallback(
+    (patch: ViewPatch) => {
+      const s = sync.current;
+      s.outbox = { ...s.outbox, ...patch };
+      flush();
+    },
+    [flush]
+  );
+
+  const onSync = useCallback(
+    (r: LiveSync) => {
+      const s = sync.current;
+      if (r.boot !== s.boot) {
+        s.boot = r.boot;
+        s.v = -1;
+      }
+      if (s.dv !== null && r.dv !== s.dv) setVisits((v) => v + 1);
+      s.dv = r.dv;
+      if (s.inflight || s.outbox || r.view.v <= s.v) return;
+      apply(r.view);
+    },
+    [apply]
+  );
 
   function go(t: Tab) {
     if (t === 'decisions') setVisits((v) => v + 1);
+    sync.current.tab = t;
     setTab(t);
+    share({ tab: t });
     window.scrollTo({ top: 0 });
   }
 
@@ -124,10 +216,17 @@ export default function App() {
               onOpenDecisions={() => go('decisions')}
               // Bumping visits refetches Agent Decisions even when it is already the open tab.
               onRunComplete={() => setVisits((v) => v + 1)}
+              onSync={onSync}
             />
           </TabsContent>
           <TabsContent value="decisions" forceMount className="mt-0 data-[state=inactive]:hidden">
-            <DecisionsScreen key={epoch} visits={visits} onOpenPipeline={() => go('pipeline')} />
+            <DecisionsScreen
+              key={epoch}
+              visits={visits}
+              remote={remote}
+              share={share}
+              onOpenPipeline={() => go('pipeline')}
+            />
           </TabsContent>
         </main>
       </Tabs>

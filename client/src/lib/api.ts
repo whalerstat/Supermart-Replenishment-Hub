@@ -333,3 +333,20 @@ export function relTime(v: unknown): string {
 }
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** The view every open screen mirrors (GET /api/pipeline/live, POST /api/view in server/routes/api.ts). */
+export interface SharedView {
+  v: number;
+  tab: 'pipeline' | 'decisions';
+  signal: number;
+  recId: string | null;
+  draftRec: string | null;
+  subject: string | null;
+  body: string | null;
+}
+export type ViewPatch = Partial<Omit<SharedView, 'v'>>;
+export interface LiveSync {
+  view: SharedView;
+  dv: number;
+  boot: number;
+}
