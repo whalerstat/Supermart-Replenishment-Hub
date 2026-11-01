@@ -132,7 +132,13 @@ export default function App() {
           )}
           {/* forceMount keeps a running pipeline animation alive while the presenter looks at Screen 2. */}
           <TabsContent value="pipeline" forceMount className="mt-0 data-[state=inactive]:hidden">
-            <PipelineScreen key={epoch} config={c} onOpenDecisions={() => go('decisions')} />
+            <PipelineScreen
+              key={epoch}
+              config={c}
+              onOpenDecisions={() => go('decisions')}
+              // Bumping visits refetches Agent Decisions even when it is already the open tab.
+              onRunComplete={() => setVisits((v) => v + 1)}
+            />
           </TabsContent>
           <TabsContent value="decisions" forceMount className="mt-0 data-[state=inactive]:hidden">
             <DecisionsScreen key={epoch} visits={visits} onOpenPipeline={() => go('pipeline')} />

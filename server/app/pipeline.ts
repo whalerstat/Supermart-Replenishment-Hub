@@ -8,7 +8,7 @@
 // steps as SQL against Lakebase so it works in any workspace with no extra setup.
 import { sql } from '../lib/db';
 import { publish } from './agent';
-import { RUN_MINUTES, TASK_MINUTES, shapeRun, type HistoryRun } from './history';
+import { RUN_MINUTES, TASK_MINUTES, inOrder, shapeRun, type HistoryRun } from './history';
 import { train } from './model';
 import { AS_OF, SCHEMA as S, UC } from './scenario';
 
@@ -331,7 +331,7 @@ export async function runHistory(limit = 6): Promise<HistoryRun[]> {
      FROM ${S}.pipeline_runs ORDER BY run_id DESC LIMIT $1`,
     [limit]
   );
-  return rows.map(shapeRun);
+  return inOrder(rows.map(shapeRun));
 }
 
 export async function latestRun(): Promise<Record<string, unknown> | null> {

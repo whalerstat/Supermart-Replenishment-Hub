@@ -46,6 +46,8 @@ const TASKS: { id: TaskId; label: string; hold: number; mins: number }[] = [
   { id: 'publish', label: 'Publish dashboard and agent', hold: 15_000, mins: 2 },
 ];
 const TOTAL_MINS = TASKS.reduce((a, t) => a + t.mins, 0);
+/** Rough server time per task call, taken out of each hold so a whole run still plays in about 90 s. */
+const TASK_CALL_MS = 1_200;
 const IDLE: Record<TaskId, State> = { ingest: 'idle', silver: 'idle', gold: 'idle', train: 'idle', publish: 'idle' };
 
 // The server still ingests the Postgres and relational systems separately; the diagram shows them as one raw source.
@@ -123,8 +125,13 @@ function useFlowPaths(
       // Keep every foundation-side anchor inside the box, whatever the column heights are.
       const onF = (y: number) => Math.min(Math.max(y, f.t + 24), f.b - 24);
       if (ml) {
-        const train = Math.min(ml.t + 26, ml.cy);
-        const back = Math.max(ml.b - 26, ml.cy);
+        let train = Math.min(ml.t + 26, ml.cy);
+        let back = Math.max(ml.b - 26, ml.cy);
+        // Before training the ML node is short, so keep the two edges visibly apart.
+        if (back - train < 24) {
+          train = ml.cy - 12;
+          back = ml.cy + 12;
+        }
         out.ml = curve({ x: f.r, y: onF(train) }, { x: ml.l, y: train });
         out.back = curve({ x: ml.l, y: back }, { x: f.r, y: onF(back) });
         nextTag = { x: (f.r + ml.l) / 2, y: back };
@@ -324,7 +331,15 @@ function Tile({ label, value, tone }: { label: string; value: string; tone?: 'ba
   );
 }
 
-export function PipelineScreen({ config, onOpenDecisions }: { config: UiConfig; onOpenDecisions: () => void }) {
+export function PipelineScreen({
+  config,
+  onOpenDecisions,
+  onRunComplete,
+}: {
+  config: UiConfig;
+  onOpenDecisions: () => void;
+  onRunComplete?: () => void;
+}) {
   const [status, setStatus] = useState<Record<TaskId, State>>(IDLE);
   const [stats, setStats] = useState<RunStats>({});
   const [runId, setRunId] = useState<number | null>(null);
@@ -355,15 +370,17 @@ export function PipelineScreen({ config, onOpenDecisions }: { config: UiConfig; 
     try {
       const { run_id } = await postJson<{ run_id: number }>('/api/pipeline/runs', {});
       setRunId(run_id);
+      setHistoryKey((k) => k + 1);
       for (const t of TASKS) {
         setStatus((s) => ({ ...s, [t.id]: 'running' }));
-        const [out] = await Promise.all([
-          postJson<Record<string, unknown>>(`/api/pipeline/runs/${run_id}/${t.id}`, {}),
-          sleep(t.hold),
-        ]);
+        // Hold first, then call the task, so the server finishes (and frees the run lock) when the
+        // animation does rather than at the start of the last step.
+        await sleep(Math.max(0, t.hold - TASK_CALL_MS));
+        const out = await postJson<Record<string, unknown>>(`/api/pipeline/runs/${run_id}/${t.id}`, {});
         setStats((s) => ({ ...s, [t.id]: out }));
         setStatus((s) => ({ ...s, [t.id]: 'done' }));
       }
+      onRunComplete?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setStatus((s) => {
@@ -401,6 +418,10 @@ export function PipelineScreen({ config, onOpenDecisions }: { config: UiConfig; 
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <span className="sr-only" aria-live="polite">
+            {running && step > 0 ? `Step ${step} of ${TASKS.length}: ${TASKS[step - 1].label}` : ''}
+            {allDone ? `Run #${runId} succeeded in ${TOTAL_MINS} minutes` : ''}
+          </span>
           {running && (
             <Badge variant="secondary" className="tabular-nums">
               Run #{runId} · step {step} of {TASKS.length}
@@ -861,7 +882,9 @@ function RunHistory({ refreshKey }: { refreshKey: number }) {
                   <td className="whitespace-nowrap py-1.5 pr-3 text-right tabular-nums">
                     {r.duration_min === null ? '—' : `${r.duration_min} min`}
                   </td>
-                  <td className="whitespace-nowrap py-1.5 pr-3 capitalize text-muted-foreground">{r.triggered_by}</td>
+                  <td className="whitespace-nowrap py-1.5 pr-3 text-muted-foreground">
+                    {r.triggered_by === 'schedule' ? 'Schedule' : r.triggered_by}
+                  </td>
                   <td className="whitespace-nowrap py-1.5 text-right tabular-nums">
                     {r.rows_ingested === null ? '—' : nf(r.rows_ingested)}
                   </td>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { RUN_MINUTES, TASK_MINUTES, shapeRun } from './history';
+import { RUN_MINUTES, TASK_MINUTES, inOrder, shapeRun } from './history';
 
 const row = (over: Record<string, unknown>) => ({
   run_id: 7,
@@ -62,5 +62,17 @@ describe('shapeRun', () => {
       rows_ingested: null,
     });
     expect(shapeRun(row({ status: 'failed' })).duration_min).toBeNull();
+  });
+});
+
+describe('inOrder', () => {
+  it('keeps app runs after the runs before them on the business date', () => {
+    const newer = shapeRun(row({ run_id: 8, sgt_time: '09:00:00' }));
+    const older = shapeRun(row({ run_id: 7, sgt_time: '17:00:00' }));
+    const seeded = shapeRun(row({ run_id: 5, seeded: 'true', sgt_date: '2026-12-06', sgt_time: '05:00:00' }));
+    const [a, b, c] = inOrder([newer, older, seeded]);
+    expect(c.started_at).toBe('2026-12-06T05:00:00+08:00');
+    expect(b.started_at).toBe('2026-12-07T17:00:00+08:00');
+    expect(a.started_at).toBe('2026-12-07T17:01:00+08:00');
   });
 });

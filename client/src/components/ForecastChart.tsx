@@ -121,7 +121,8 @@ export function ForecastChart({ signal }: { signal: SignalPayload }) {
     if (!c.showStockLevel) return '';
     const upTo = win && win.a > 0 ? win.a - 1 : pts.length - 1;
     let d = line((p) => p.stock_level, 0, upTo);
-    if (d && win && win.a >= 0 && perDay !== undefined) d += `L${x(win.a).toFixed(1)},${y(perDay).toFixed(1)}`;
+    if (d && win && win.a >= 0 && perDay !== undefined)
+      d += `L${(x(win.a) - step / 2).toFixed(1)},${y(perDay).toFixed(1)}`;
     return d;
   })();
   const ticks = Array.from({ length: Math.round(max / tickStep) + 1 }, (_, i) => i * tickStep);
@@ -147,7 +148,7 @@ export function ForecastChart({ signal }: { signal: SignalPayload }) {
       ? [{ kind: 'line' as const, cls: 'stroke-brand', label: 'Ordered, per day of the order window' }]
       : []),
     ...(c.showStockLevel
-      ? [{ kind: 'line' as const, cls: 'stroke-series-stock', label: 'Stock (units sold + 15% buffer)' }]
+      ? [{ kind: 'line' as const, cls: 'stroke-series-stock', label: 'Stock (sales or forecast + 15% buffer)' }]
       : []),
     ...(c.showLy && !c.showStockLevel
       ? [{ kind: 'dash' as const, cls: 'stroke-series-ref', label: 'Last year, same weekday' }]
@@ -389,7 +390,7 @@ export function ForecastChart({ signal }: { signal: SignalPayload }) {
             <th>Units sold</th>
             <th>Forecast</th>
             {c.showStock && <th>Projected on hand</th>}
-            {c.showStockLevel && <th>Stock (units sold + 15% buffer)</th>}
+            {c.showStockLevel && <th>Stock (sales or forecast + 15% buffer)</th>}
             {c.showLy && !c.showStockLevel && <th>Last year</th>}
           </tr>
         </thead>

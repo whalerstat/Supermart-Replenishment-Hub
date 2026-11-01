@@ -36,9 +36,21 @@ const ReviseBody = z.object({
 });
 const RejectBody = z.object({ reason: z.string().max(500).optional() });
 
-/** One pipeline run at a time: a second click while a run is going gets a 409. */
-const RUN_LOCK_MS = 5 * 60_000;
-let activeRun: { id: number; startedAt: number } | null = null;
+/**
+ * One pipeline run at a time: a second click while a run is going gets a 409. The lock expires after
+ * RUN_IDLE_MS without a task call (the longest step hold is 27 s), so a closed tab frees it quickly.
+ * id -1 is a claim held while a run row is being created or the schema is being reset.
+ */
+const RUN_IDLE_MS = 60_000;
+let activeRun: { id: number; lastSeen: number } | null = null;
+
+function runBusy(): boolean {
+  return activeRun !== null && Date.now() - activeRun.lastSeen < RUN_IDLE_MS;
+}
+
+function busyMessage(): string {
+  return activeRun && activeRun.id > 0 ? `Run #${activeRun.id} is still in progress` : 'The app is being reset';
+}
 
 export function registerRoutes(app: Application): void {
   app.get('/api/whoami', (req, res) => {
@@ -82,16 +94,18 @@ export function registerRoutes(app: Application): void {
   });
 
   app.post('/api/pipeline/runs', async (req, res) => {
-    // A run abandoned mid-way (browser closed) frees the lock after 5 minutes; a full run takes 90 s.
-    if (activeRun && Date.now() - activeRun.startedAt < RUN_LOCK_MS) {
-      res.status(409).json({ error: `Run #${activeRun.id} is still in progress` });
+    if (runBusy()) {
+      res.status(409).json({ error: busyMessage() });
       return;
     }
+    // Claim before the first await so two near-simultaneous clicks cannot both start a run.
+    activeRun = { id: -1, lastSeen: Date.now() };
     try {
       const id = await startRun(who(req));
-      activeRun = { id, startedAt: Date.now() };
+      activeRun = { id, lastSeen: Date.now() };
       res.json({ run_id: id, tasks: TASKS });
     } catch (err) {
+      activeRun = null;
       fail(res, err);
     }
   });
@@ -103,10 +117,11 @@ export function registerRoutes(app: Application): void {
       res.status(400).json({ error: `task must be one of ${TASKS.join(', ')}` });
       return;
     }
-    if (activeRun?.id !== id) {
+    if (activeRun?.id !== id || !runBusy()) {
       res.status(409).json({ error: `Run #${id} is not the active run` });
       return;
     }
+    activeRun.lastSeen = Date.now();
     try {
       const stats = await runTask(id, task);
       if (task === 'publish') activeRun = null;
@@ -191,6 +206,10 @@ export function registerRoutes(app: Application): void {
   });
 
   app.post('/api/decisions/recs/:id/approve', async (req, res) => {
+    if (runBusy()) {
+      res.status(409).json({ error: `${busyMessage()}; reload the decisions when it finishes` });
+      return;
+    }
     const parsed = ApproveBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: 'subject and body are required' });
@@ -205,6 +224,10 @@ export function registerRoutes(app: Application): void {
   });
 
   app.post('/api/decisions/recs/:id/reject', async (req, res) => {
+    if (runBusy()) {
+      res.status(409).json({ error: `${busyMessage()}; reload the decisions when it finishes` });
+      return;
+    }
     const parsed = RejectBody.safeParse(req.body ?? {});
     try {
       const out = await reject(String(req.params.id), parsed.success ? (parsed.data.reason ?? '') : '', who(req));
@@ -235,11 +258,14 @@ export function registerRoutes(app: Application): void {
       res.status(403).json({ error: 'set DEMO_ALLOW_RESET=true in app.yaml to enable' });
       return;
     }
+    // Hold the run lock while the schema is dropped and re-seeded, so no run starts on half-built tables.
+    activeRun = { id: -1, lastSeen: Date.now() };
     try {
-      activeRun = null;
       res.json({ result: await bootstrap(true) });
     } catch (err) {
       fail(res, err);
+    } finally {
+      activeRun = null;
     }
   });
 }

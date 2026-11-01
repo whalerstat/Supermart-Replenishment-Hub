@@ -36,3 +36,28 @@ export function shapeRun(r: Record<string, unknown>): HistoryRun {
     rows_ingested: num(r.rows_ingested),
   };
 }
+
+/**
+ * App runs keep only their time of day on AS_OF, so runs made on different real days could list out of
+ * order. Walks oldest to newest and nudges each app run to at least a minute after the one before.
+ * Takes and returns newest first, as the history list shows it.
+ */
+export function inOrder(runs: HistoryRun[]): HistoryRun[] {
+  const out = runs.map((r) => ({ ...r }));
+  let prev = -Infinity;
+  for (let i = out.length - 1; i >= 0; i--) {
+    const r = out[i];
+    let t = Date.parse(r.started_at);
+    if (r.started_at.startsWith(AS_OF) && t <= prev) {
+      t = prev + 60_000;
+      r.started_at = sgt(t);
+    }
+    prev = t;
+  }
+  return out;
+}
+
+/** An instant as Singapore local ISO time ("2026-12-07T09:41:00+08:00"). */
+function sgt(ms: number): string {
+  return `${new Date(ms + 8 * 3_600_000).toISOString().slice(0, 19)}+08:00`;
+}

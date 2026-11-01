@@ -757,16 +757,20 @@ export function DecisionsScreen({ visits, onOpenPipeline }: { visits: number; on
         <AlertDescription>{data.error}</AlertDescription>
       </Alert>
     );
-  if (!data.data?.ready || !signal)
+  if (!data.data?.ready || !signal) {
+    const ranClean = data.data?.ready === true;
     return (
       <div className="flex flex-col items-center gap-3 rounded-xl border bg-card px-6 py-16 text-center">
-        <h2 className="m-0 text-base font-semibold">No decisions yet</h2>
+        <h2 className="m-0 text-base font-semibold">{ranClean ? 'Nothing to decide today' : 'No decisions yet'}</h2>
         <p className="m-0 max-w-sm text-sm text-muted-foreground">
-          Run the job on Data pipeline to generate today&apos;s signals.
+          {ranClean
+            ? 'The latest run raised no signals.'
+            : 'Run the job on Data pipeline to generate today\u2019s signals.'}
         </p>
-        <Button onClick={onOpenPipeline}>Go to Data pipeline</Button>
+        {!ranClean && <Button onClick={onOpenPipeline}>Go to Data pipeline</Button>}
       </div>
     );
+  }
 
   const p = signal.payload;
   const model = data.data?.model;
