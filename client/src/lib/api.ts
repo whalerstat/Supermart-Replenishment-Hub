@@ -73,6 +73,17 @@ export interface RunStats {
   publish?: { signals: number; recommendations: number; dashboard: Dashboard; app: string; ms: number };
 }
 export type TaskId = 'ingest' | 'silver' | 'gold' | 'train' | 'publish';
+export interface PipelineRun {
+  run_id: number;
+  started_at: string;
+  status: 'succeeded' | 'failed' | 'running';
+  duration_min: number | null;
+  triggered_by: string;
+  rows_ingested: number | null;
+}
+export interface PipelineHistory {
+  runs: PipelineRun[];
+}
 
 // ── Screen 2 ──
 export interface SeriesPoint {
