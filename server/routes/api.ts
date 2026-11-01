@@ -1,5 +1,5 @@
 // server/routes/api.ts — HTTP surface for the two screens.
-//   Screen 1 (pipeline):  POST /api/pipeline/runs, POST /api/pipeline/runs/:id/:task, GET /api/pipeline/latest,
+//   Screen 1 (pipeline):  POST /api/pipeline/runs, GET /api/pipeline/live, GET /api/pipeline/latest,
 //                         GET /api/pipeline/history
 //   Screen 2 (decisions): GET /api/decisions, POST /api/decisions/recs/:id/{draft|revise|approve|reject}
 //   POST /api/reset re-seeds the schema (only with DEMO_ALLOW_RESET=true)
@@ -38,7 +38,7 @@ const RejectBody = z.object({ reason: z.string().max(500).optional() });
 
 /**
  * One pipeline run at a time: a second click while a run is going gets a 409. The lock expires after
- * RUN_IDLE_MS without a task call (the longest step hold is 27 s), so a closed tab frees it quickly.
+ * RUN_IDLE_MS without a step starting (the longest step holds 17.5 s), so a stuck run cannot hold it.
  * id -1 is a claim held while a run row is being created or the schema is being reset.
  */
 const RUN_IDLE_MS = 60_000;
@@ -46,6 +46,53 @@ let activeRun: { id: number; lastSeen: number } | null = null;
 
 function runBusy(): boolean {
   return activeRun !== null && Date.now() - activeRun.lastSeen < RUN_IDLE_MS;
+}
+
+/**
+ * The run plays on the server so every device shows the same progress: each step holds for its share of
+ * the 30 s (bronze, silver and gold under 2 s each). Publish holds first, so decisions appear, and the
+ * lock frees, as the animation ends.
+ */
+const HOLD_MS: Record<TaskId, number> = { ingest: 1_500, silver: 1_500, gold: 1_500, train: 17_500, publish: 8_000 };
+
+interface LiveRun {
+  run_id: number;
+  tasks: Record<TaskId, 'idle' | 'running' | 'done' | 'failed'>;
+  stats: Partial<Record<TaskId, unknown>>;
+  error: string | null;
+  finished: boolean;
+}
+/** The current or last run since the server started; null after a reset. */
+let live: LiveRun | null = null;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function playRun(id: number): Promise<void> {
+  for (const task of TASKS) {
+    if (live?.run_id !== id) return;
+    live.tasks[task] = 'running';
+    if (activeRun?.id === id) activeRun.lastSeen = Date.now();
+    try {
+      const stats =
+        task === 'publish'
+          ? await sleep(HOLD_MS[task]).then(() => runTask(id, task))
+          : (await Promise.all([runTask(id, task), sleep(HOLD_MS[task])]))[0];
+      if (live?.run_id !== id) return;
+      live.stats[task] = stats;
+      live.tasks[task] = 'done';
+    } catch (err) {
+      console.error(`[api] run #${id} ${task}`, err);
+      if (live?.run_id === id) {
+        live.tasks[task] = 'failed';
+        live.error = err instanceof Error ? err.message : String(err);
+        live.finished = true;
+      }
+      if (activeRun?.id === id) activeRun = null;
+      return;
+    }
+  }
+  if (live?.run_id === id) live.finished = true;
+  if (activeRun?.id === id) activeRun = null;
 }
 
 function busyMessage(): string {
@@ -103,6 +150,14 @@ export function registerRoutes(app: Application): void {
     try {
       const id = await startRun(who(req));
       activeRun = { id, lastSeen: Date.now() };
+      live = {
+        run_id: id,
+        tasks: Object.fromEntries(TASKS.map((t) => [t, 'idle'])) as LiveRun['tasks'],
+        stats: {},
+        error: null,
+        finished: false,
+      };
+      void playRun(id);
       res.json({ run_id: id, tasks: TASKS });
     } catch (err) {
       activeRun = null;
@@ -110,26 +165,9 @@ export function registerRoutes(app: Application): void {
     }
   });
 
-  app.post('/api/pipeline/runs/:id/:task', async (req, res) => {
-    const id = Number(req.params.id);
-    const task = req.params.task as TaskId;
-    if (!TASKS.includes(task) || !Number.isInteger(id)) {
-      res.status(400).json({ error: `task must be one of ${TASKS.join(', ')}` });
-      return;
-    }
-    if (activeRun?.id !== id || !runBusy()) {
-      res.status(409).json({ error: `Run #${id} is not the active run` });
-      return;
-    }
-    activeRun.lastSeen = Date.now();
-    try {
-      const stats = await runTask(id, task);
-      if (task === 'publish') activeRun = null;
-      res.json(stats);
-    } catch (err) {
-      activeRun = null;
-      fail(res, err);
-    }
+  // Every open screen (desktop and phone) polls this and plays the same run.
+  app.get('/api/pipeline/live', (_req, res) => {
+    res.json({ live });
   });
 
   // ── Screen 2 ──
@@ -267,6 +305,7 @@ export function registerRoutes(app: Application): void {
     const claim = { id: -1, lastSeen: Date.now() };
     activeRun = claim;
     const keepAlive = setInterval(() => (claim.lastSeen = Date.now()), 10_000);
+    live = null;
     try {
       res.json({ result: await bootstrap(true) });
     } catch (err) {
