@@ -147,9 +147,7 @@ export function ForecastChart({ signal }: { signal: SignalPayload }) {
     ...(perDay !== undefined
       ? [{ kind: 'line' as const, cls: 'stroke-brand', label: 'Ordered, per day of the order window' }]
       : []),
-    ...(c.showStockLevel
-      ? [{ kind: 'line' as const, cls: 'stroke-series-stock', label: 'Stock (sales or forecast + 15% buffer)' }]
-      : []),
+    ...(c.showStockLevel ? [{ kind: 'line' as const, cls: 'stroke-series-stock', label: 'Stock' }] : []),
     ...(c.showLy && !c.showStockLevel
       ? [{ kind: 'dash' as const, cls: 'stroke-series-ref', label: 'Last year, same weekday' }]
       : []),
@@ -390,7 +388,7 @@ export function ForecastChart({ signal }: { signal: SignalPayload }) {
             <th>Units sold</th>
             <th>Forecast</th>
             {c.showStock && <th>Projected on hand</th>}
-            {c.showStockLevel && <th>Stock (sales or forecast + 15% buffer)</th>}
+            {c.showStockLevel && <th>Stock</th>}
             {c.showLy && !c.showStockLevel && <th>Last year</th>}
           </tr>
         </thead>

@@ -1,23 +1,13 @@
 // client/src/App.tsx — header + two screens: (1) the governed data foundation pipeline and
-// (2) the Agent Decisions app. Desktop: tabs under the header. Phone: a bottom bar.
-import { useEffect, useState } from 'react';
+// (2) the Agent Decisions app. Desktop: the logo bar returns to the pipeline. Phone: a bottom bar.
+import { useState } from 'react';
 import { Bot, Moon, RefreshCw, Sun, Workflow, type LucideIcon } from 'lucide-react';
-import {
-  Alert,
-  AlertDescription,
-  Badge,
-  Button,
-  Skeleton,
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from '@databricks/appkit-ui/react';
+import { Alert, AlertDescription, Button, Skeleton, Tabs, TabsContent } from '@databricks/appkit-ui/react';
 import { DatabricksLogo } from './components/DatabricksLogo';
 import { DecisionsScreen } from './components/DecisionsScreen';
 import { GeniePanel } from './components/GeniePanel';
 import { PipelineScreen } from './components/PipelineScreen';
-import { getJson, postJson, useJson, type UiConfig } from './lib/api';
+import { postJson, useJson, type UiConfig } from './lib/api';
 import { useTheme } from './lib/theme';
 
 type Tab = 'pipeline' | 'decisions';
@@ -28,18 +18,11 @@ const TABS: { id: Tab; label: string; short: string; icon: LucideIcon }[] = [
 
 export default function App() {
   const config = useJson<UiConfig>('/api/config');
-  const [me, setMe] = useState<{ email: string | null } | null>(null);
   const [tab, setTab] = useState<Tab>('pipeline');
   const [epoch, setEpoch] = useState(0);
   const [visits, setVisits] = useState(0);
   const [resetError, setResetError] = useState<string | null>(null);
   const [theme, toggleTheme] = useTheme();
-
-  useEffect(() => {
-    getJson<{ email: string | null }>('/api/whoami')
-      .then(setMe)
-      .catch(() => setMe(null));
-  }, []);
 
   function go(t: Tab) {
     if (t === 'decisions') setVisits((v) => v + 1);
@@ -72,19 +55,34 @@ export default function App() {
     <div className="min-h-dvh bg-background text-foreground">
       <header className="border-b bg-card px-4 py-3 md:px-6">
         <div className="flex items-center gap-3 md:gap-4">
-          <DatabricksLogo className="h-5 w-auto shrink-0 md:h-6" />
-          <span aria-hidden className="h-8 w-px shrink-0 bg-border" />
-          <div className="min-w-0 flex-1">
-            <h1 className="m-0 truncate text-base font-semibold leading-tight md:text-lg">{c.title}</h1>
-            <p className="m-0 truncate text-xs text-muted-foreground md:text-sm">
-              For {c.persona}
-              <span className="hidden sm:inline"> · {c.subtitle}</span>
-            </p>
-          </div>
+          <h1 className="m-0 min-w-0 flex-1">
+            {/* The logo bar is the way home: the screen tabs are gone, so it returns to Data pipeline. */}
+            <button
+              type="button"
+              onClick={() => go('pipeline')}
+              title="Go to Data pipeline"
+              className="flex min-w-0 max-w-full items-center gap-3 rounded-md text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring md:gap-4"
+            >
+              <DatabricksLogo className="h-5 w-auto shrink-0 md:h-6" />
+              <span aria-hidden className="h-8 w-px shrink-0 bg-border" />
+              <img
+                src="/supermart-logo.png"
+                alt="Supermart"
+                width={416}
+                height={97}
+                className="h-6 w-auto shrink-0 md:h-7"
+              />
+              <span aria-hidden className="hidden h-8 w-px shrink-0 bg-border sm:block" />
+              <span className="flex min-w-0 flex-col">
+                <span className="truncate text-base font-semibold leading-tight md:text-lg">{c.title}</span>
+                <span className="truncate text-xs font-normal text-muted-foreground md:text-sm">
+                  For {c.persona}
+                  <span className="hidden sm:inline"> · {c.subtitle}</span>
+                </span>
+              </span>
+            </button>
+          </h1>
           <div className="flex shrink-0 items-center gap-1 md:gap-2">
-            <Badge variant="secondary" className="hidden max-w-56 truncate md:inline-flex">
-              {me?.email ?? 'Signed in'}
-            </Badge>
             <GeniePanel enabled={c.genie_enabled} spaceUrl={c.genie_space_url} />
             {c.reset_enabled && (
               <Button
@@ -113,17 +111,6 @@ export default function App() {
       </header>
 
       <Tabs value={tab} onValueChange={(v) => go(v as Tab)}>
-        <div className="hidden border-b bg-card px-6 pb-3 md:block">
-          <TabsList>
-            {TABS.map((t) => (
-              <TabsTrigger key={t.id} value={t.id} className="gap-1.5 data-[state=active]:[&>svg]:text-brand">
-                <t.icon aria-hidden className="size-4" />
-                {t.label}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </div>
-
         <main className="px-4 pb-[calc(6rem+env(safe-area-inset-bottom))] pt-4 md:px-6 md:pb-10 md:pt-6">
           {resetError && (
             <Alert variant="destructive" className="mb-4">

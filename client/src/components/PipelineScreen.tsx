@@ -37,16 +37,16 @@ import {
 } from '../lib/api';
 
 type State = 'idle' | 'running' | 'done' | 'failed';
-// `hold` is the least time the step stays on screen (the animation totals 90 s); `mins` is the mocked job time we record.
+// `hold` is the least time the step stays on screen (the animation totals 45 s); `mins` is the mocked job time we record.
 const TASKS: { id: TaskId; label: string; hold: number; mins: number }[] = [
-  { id: 'ingest', label: 'Ingest three sources', hold: 18_000, mins: 4 },
-  { id: 'silver', label: 'Clean, conform and mask', hold: 15_000, mins: 3 },
-  { id: 'gold', label: 'Build the gold position', hold: 15_000, mins: 3 },
-  { id: 'train', label: 'Train and register the forecast', hold: 27_000, mins: 6 },
-  { id: 'publish', label: 'Publish dashboard and agent', hold: 15_000, mins: 2 },
+  { id: 'ingest', label: 'Ingest three sources', hold: 9_000, mins: 4 },
+  { id: 'silver', label: 'Clean, conform and mask', hold: 7_500, mins: 3 },
+  { id: 'gold', label: 'Build the gold position', hold: 7_500, mins: 3 },
+  { id: 'train', label: 'Train and register the forecast', hold: 13_500, mins: 6 },
+  { id: 'publish', label: 'Publish dashboard and agent', hold: 7_500, mins: 2 },
 ];
 const TOTAL_MINS = TASKS.reduce((a, t) => a + t.mins, 0);
-/** Rough server time per task call, taken out of each hold so a whole run still plays in about 90 s. */
+/** Rough server time per task call, taken out of each hold so a whole run still plays in about 45 s. */
 const TASK_CALL_MS = 1_200;
 const IDLE: Record<TaskId, State> = { ingest: 'idle', silver: 'idle', gold: 'idle', train: 'idle', publish: 'idle' };
 
@@ -664,7 +664,7 @@ export function PipelineScreen({
           <div className="flex flex-col gap-5">
             <div>
               <ColumnLabel>Machine learning</ColumnLabel>
-              <Node nodeRef={mlRef} state={status.train}>
+              <Node nodeRef={mlRef} state={status.train} className="min-h-40">
                 <div className="flex items-start gap-2.5">
                   <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-secondary">
                     <BrainCircuit aria-hidden className="size-4" />
