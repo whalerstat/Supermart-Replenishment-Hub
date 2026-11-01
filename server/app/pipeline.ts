@@ -1,5 +1,5 @@
 // server/app/pipeline.ts — the job behind Screen 1. Five tasks, run in order:
-//   ingest  → four sources land as raw JSON in bronze (one table, tagged by source)
+//   ingest  → three sources land as raw JSON in bronze (one table, tagged by source system)
 //   silver  → parse, conform, de-duplicate, quarantine bad rows, hash member identities
 //   gold    → one replenishment position per store × SKU, travel features, knowledge clauses
 //   train   → fit and backtest the demand forecast, register a new model version, score 14 days
@@ -55,6 +55,7 @@ export async function failRun(runId: number, task: string, message: string): Pro
 }
 
 // ── ingest ────────────────────────────────────────────────────────────────────────────────────
+// The raw source spans two systems (Postgres and relational); they stay separate here so bronze keeps exact lineage.
 const SOURCES: { system: string; label: string; objects: { object: string; from: string }[] }[] = [
   {
     system: 'managed_postgres',
