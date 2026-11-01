@@ -39,16 +39,58 @@ A two-screen Databricks App for the final-round "Build, Demo, Pitch!" story abou
 - **Job tasks** (`server/app/pipeline.ts`, `model.ts`, `agent.ts`): `ingest → silver → gold → train → publish`. Each is a real API call, so the animation follows real work. In production the same steps are a Lakeflow job over Delta tables in Unity Catalog and an MLflow model; the panel shows that note under Governance.
 - **Model service:** `workspace.ai_gateway.haiku55` (Claude Haiku 5.5), called on the gateway's Anthropic Messages path with thinking disabled.
 
+## Copilot (Claude Haiku 5.5)
+
+In the e-mail draft panel on Screen 2, the planner types an instruction or clicks a quick chip: **Make it shorter**, **Firmer tone** or **Add the delivery date up front**.
+
+- `POST /api/decisions/recs/:id/revise` streams the rewrite as plain text. The model is `MODEL_SERVICE` (`workspace.ai_gateway.haiku55`), called on the Unity AI Gateway Anthropic Messages path (`/ai-gateway/anthropic/v1/messages`) with thinking disabled and no `temperature`, which Haiku 5.5 rejects.
+- The rewrite is grounded only on that recommendation's Postgres facts and clauses. The live checks rerun on the new text.
+- **Stop** keeps the text streamed so far. **Undo** restores the text from before the instruction.
+- A cut-off stream (dropped connection, `max_tokens`, or no `message_stop`) is rejected and the previous body is restored.
+- A 503 shows "Copilot unavailable" and the planner keeps editing by hand.
+
+## Genie
+
+An **Ask Genie** button in the header (both screens) opens a panel on the Genie space **Supermart Replenishment Hub (demo)**. The space covers `retail_lakebase.supermart_replen` through eight curated tables: `gold_replenishment_position`, `gold_store_travel_daily`, `gold_knowledge_clauses`, `ml_forecast`, `agent_signals`, `agent_recommendations`, `decision_log` and `outbox`. Queries run as the signed-in user (`user_api_scopes: genie` in `databricks.yml`).
+
+Setup, after the first deploy has seeded the schema:
+
+1. Build the space: `node scripts/build-genie-space.mjs`. It creates the space, or updates it when one with the same title exists, so it is safe to re-run. It uses `DATABRICKS_CONFIG_PROFILE` (default `BenV`) and warehouse `babf1edddc36b6d3` (or `WAREHOUSE_ID`). `--dry-run` prints the payload without calling Databricks.
+2. Put the printed id in `databricks.yml` as `genie_space_id` under `targets.default.variables`. Then `databricks bundle deploy` and `databricks bundle run app`.
+3. Grant readers. The schema is owned by the app's service principal, so each Genie user's Postgres role needs read access. List the roles in `GENIE_READER_ROLES` in `app.yaml` (comma-separated; a Databricks user's role is their e-mail). At startup the app grants `USAGE` on the schema and `SELECT` on the eight tables to each listed role, and revokes any wider grant from an earlier build.
+4. Each user also needs `CAN_RUN` on the space and access to the `retail_lakebase` catalog.
+
+## What is real and what is mock
+
+**Real**
+
+- Lakebase Postgres tables in `supermart_replen`: sources, bronze, silver, gold, forecast and agent tables.
+- Haiku 5.5 drafts and rewrites, called through the Unity AI Gateway.
+- Genie space queries, run as the signed-in user.
+- Decision log and outbox rows, written by Approve and Reject.
+
+**Mock**
+
+- All data. Supermart, its stores, people, suppliers and numbers are fictional.
+- The Lakehouse and synced-table picture on Screen 1. All tables live in Postgres.
+- The Lakeflow job. The server runs the steps and the browser animates them. No `DATABRICKS_JOB_ID` is set.
+- The dashboard link. `DASHBOARD_URL` is unset, so the dashboard node does not open a real AI/BI dashboard.
+- E-mail sending. "Sent" e-mails are `outbox` rows marked `queued (mock - never sent)`.
+
 ## Deploy (same workspace as exec-insight-console)
 
+The bundle's default target uses the Databricks CLI profile `BenV` (`workspace.profile` in `databricks.yml`). In another workspace, change that value or pass `-p <profile>` to each command.
+
 ```bash
-databricks auth login --host https://<your-workspace>.cloud.databricks.com   # once
-cd supermart-replenishment-hub
+databricks auth login --host https://<your-workspace>.cloud.databricks.com --profile <profile>   # once
+cd Supermart-Replenishment-Hub
 databricks bundle validate
-databricks bundle deploy          # creates the app with the postgres + model resources; lifecycle.started starts it
+databricks bundle deploy          # creates the app with the postgres, model and Genie resources; lifecycle.started starts it
 databricks bundle run app         # (re)deploys the source and starts the app
 databricks apps get supermart-replenishment-hub   # URL and status
 ```
+
+`databricks apps deploy` is the non-bundle alternative. It redeploys source to an existing app but does not bind the Lakebase, model-service or Genie resources, so use the bundle unless you bind them yourself.
 
 - **First start:** the app creates `supermart_replen`, seeds the sources and runs the pipeline once, so Screen 2 has data. This takes a few seconds; see `/logz` if anything fails.
 - **Same Lakebase project and model service as exec-insight-console:** both are bound in `databricks.yml`. If the model service has another name, change `model_service` there.
@@ -81,4 +123,18 @@ databricks apps get supermart-replenishment-hub   # URL and status
 
 ## Local development
 
-`pnpm install`, then `pnpm run typecheck && pnpm run build`. The server needs a Lakebase connection (`.env.example`). Schema creation runs only in the deployed app (`DEMO_BOOTSTRAP=true` is in `app.yaml`, never `.env`).
+```bash
+pnpm install
+cp .env.example .env    # Lakebase endpoint, model service and host
+pnpm dev
+```
+
+The server needs a Lakebase connection (`.env.example`). Schema bootstrap is skipped locally unless `DEMO_BOOTSTRAP=true` is set. Keep it in `app.yaml` and out of `.env`, so a local run never creates the schema under your identity.
+
+Gates:
+
+```bash
+pnpm typecheck
+pnpm lint
+pnpm test
+```

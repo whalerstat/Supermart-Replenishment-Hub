@@ -257,14 +257,13 @@ function SyncConnector({ state }: { state: State }) {
       </svg>
       <span
         role="status"
-        aria-label={`Synced table, continuous: ${label}`}
         className={cn(
           'rounded-full border px-2 py-0.5 text-xs font-semibold',
           state === 'done' ? 'border-success/40 text-success' : 'text-muted-foreground',
           state === 'running' && 'border-brand text-brand-text'
         )}
       >
-        Synced table · continuous
+        Synced table · continuous<span className="sr-only">: {label}</span>
       </span>
       <span className="text-xs text-muted-foreground">Gold and forecast synced to Postgres for the app</span>
     </div>
@@ -600,7 +599,7 @@ export function PipelineScreen({ config, onOpenDecisions }: { config: UiConfig; 
                             <span className="text-xs font-normal text-muted-foreground"> forecasts</span>
                           </>
                         ) : (
-                          <Loader2 aria-label="Training" className="size-4 animate-spin text-brand" />
+                          <Loader2 aria-label="Training" className="size-4 motion-safe:animate-spin text-brand" />
                         )}
                       </span>
                     </div>

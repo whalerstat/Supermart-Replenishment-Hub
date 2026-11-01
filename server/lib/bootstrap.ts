@@ -37,6 +37,18 @@ export async function bootstrap(force = false): Promise<'seeded' | 'kept' | 'ski
   }
 }
 
+/** The curated tables the Genie space exposes (genie/space.json); raw source and bronze rows stay private. */
+const GENIE_TABLES = [
+  'gold_replenishment_position',
+  'gold_store_travel_daily',
+  'gold_knowledge_clauses',
+  'ml_forecast',
+  'agent_signals',
+  'agent_recommendations',
+  'decision_log',
+  'outbox',
+];
+
 /**
  * Genie queries the schema through the Lakebase catalog as the signed-in user, but the schema is owned
  * by the app's service principal, so each reader's Postgres role needs USAGE + SELECT. GENIE_READER_ROLES
@@ -55,10 +67,14 @@ async function grantReaders(): Promise<void> {
         continue;
       }
       const r = `"${role.replace(/"/g, '""')}"`;
+      // Re-run on every start because a reset drops and recreates the tables, which drops their grants.
+      // The revokes undo any wider grant an earlier build made, so only the curated tables stay readable.
+      const tables = GENIE_TABLES.map((t) => `${SCHEMA}.${t}`).join(', ');
       await exec(
-        `GRANT USAGE ON SCHEMA ${SCHEMA} TO ${r};
-         GRANT SELECT ON ALL TABLES IN SCHEMA ${SCHEMA} TO ${r};
-         ALTER DEFAULT PRIVILEGES IN SCHEMA ${SCHEMA} GRANT SELECT ON TABLES TO ${r};`
+        `REVOKE SELECT ON ALL TABLES IN SCHEMA ${SCHEMA} FROM ${r};
+         ALTER DEFAULT PRIVILEGES IN SCHEMA ${SCHEMA} REVOKE SELECT ON TABLES FROM ${r};
+         GRANT USAGE ON SCHEMA ${SCHEMA} TO ${r};
+         GRANT SELECT ON ${tables} TO ${r};`
       );
       console.log(`[demo] granted read on ${SCHEMA} to ${role}`);
     } catch (err) {

@@ -348,7 +348,9 @@ function EmailPanel({
   }
 
   useEffect(() => {
+    // Null the ref too, so the aborted revise() fails its ownership check and leaves the new rec alone.
     copilot.current?.abort();
+    copilot.current = null;
     setResult(null);
     setRejecting(false);
     setReason('');

@@ -60,7 +60,9 @@ export async function completeStream(
   client ??= createWorkspaceClient();
   const ctrl = new AbortController();
   const abort = () => ctrl.abort();
-  signal?.addEventListener('abort', abort, { once: true });
+  // A listener added after the caller already aborted never fires, so check first.
+  if (signal?.aborted) ctrl.abort();
+  else signal?.addEventListener('abort', abort, { once: true });
   const timer = setTimeout(abort, timeoutMs);
   try {
     const response = await client.request({
@@ -85,12 +87,17 @@ export async function completeStream(
     const decoder = new TextDecoder();
     let rest = '';
     let out = '';
+    let stopReason: string | null = null;
+    let finished = false;
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       const parsed = parseSse(rest + decoder.decode(value, { stream: true }));
       rest = parsed.rest;
       for (const ev of parsed.events) {
+        if (ev.type === 'message_stop') finished = true;
+        if (ev.type === 'message_delta')
+          stopReason = (ev.delta as { stop_reason?: string } | undefined)?.stop_reason ?? stopReason;
         const text = textDelta(ev);
         if (!text) continue;
         out += text;
@@ -98,6 +105,8 @@ export async function completeStream(
       }
     }
     if (ctrl.signal.aborted) throw new Error('Model call aborted');
+    // A clean EOF without message_stop (dropped proxy) or a max_tokens cut would pass off a partial e-mail.
+    if (!finished || stopReason === 'max_tokens') throw new Error(`Model stream ended early (${stopReason ?? 'no message_stop'})`);
     return out;
   } finally {
     clearTimeout(timer);
