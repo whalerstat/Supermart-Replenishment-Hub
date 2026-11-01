@@ -378,34 +378,53 @@ function EmailPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rec?.rec_id]);
 
-  // Mirror the draft across devices. Text that arrived from another device is remembered in `applied` so it
-  // is not sent straight back; local edits (typing, copilot streaming, undo) go out at most every 400 ms.
-  const applied = useRef<{ subject: string; body: string } | null>(null);
+  // Mirror the draft across devices. Only real local edits (typing, copilot output, undo) are shared, at most
+  // every 400 ms; loading the template or applying another device's text never writes back.
   const sendTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latest = useRef<{ subject: string; body: string; recId: string } | null>(null);
-  useEffect(() => {
-    if (!rec || !remote || remote.draftRec !== rec.rec_id || remote.body === null) return;
-    // Our own unsent edit is newer than whatever the other device last wrote.
-    if (sendTimer.current) return;
-    const next = { subject: remote.subject ?? subject, body: remote.body };
-    applied.current = next;
-    setSubject(next.subject);
-    setBody(next.body);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [remote, rec?.rec_id, draft]);
-  useEffect(() => {
-    if (!rec || rec.status !== 'proposed' || !draft) return;
-    const a = applied.current;
-    if (a && a.subject === subject && a.body === body) return;
-    latest.current = { subject, body, recId: rec.rec_id };
+  function localEdit(next: { subject?: string; body?: string }) {
+    if (!rec || rec.status !== 'proposed') return;
+    const prev = latest.current?.recId === rec.rec_id ? latest.current : { subject, body, recId: rec.rec_id };
+    latest.current = { ...prev, ...next, recId: rec.rec_id };
     if (sendTimer.current) return;
     sendTimer.current = setTimeout(() => {
       sendTimer.current = null;
       const l = latest.current;
       if (l) share({ draftRec: l.recId, subject: l.subject, body: l.body });
     }, 400);
+  }
+  const editSubject = (v: string) => {
+    setSubject(v);
+    localEdit({ subject: v });
+  };
+  const editBody = (v: string) => {
+    setBody(v);
+    localEdit({ body: v });
+  };
+  useEffect(() => {
+    if (!rec || rec.status !== 'proposed' || !remote || remote.draftRec !== rec.rec_id || remote.body === null) return;
+    // Our own unsent edit is newer than whatever the other device last wrote.
+    if (sendTimer.current) return;
+    latest.current = { subject: remote.subject ?? subject, body: remote.body, recId: rec.rec_id };
+    setSubject(latest.current.subject);
+    setBody(latest.current.body);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subject, body]);
+  }, [remote, rec?.rec_id, draft]);
+  // A decision recorded on any device: stop local work and show the e-mail as it was approved.
+  useEffect(() => {
+    if (!rec || rec.status === 'proposed') return;
+    copilot.current?.abort();
+    copilot.current = null;
+    if (sendTimer.current) clearTimeout(sendTimer.current);
+    sendTimer.current = null;
+    latest.current = null;
+    if (rec.draft) {
+      setDraft(rec.draft);
+      setSubject(rec.draft.subject);
+      setBody(rec.draft.body);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rec?.rec_id, rec?.status]);
   useEffect(
     () => () => {
       if (sendTimer.current) clearTimeout(sendTimer.current);
@@ -431,17 +450,16 @@ function EmailPanel({
       const text = await postStream(
         `/api/decisions/recs/${encodeURIComponent(rec.rec_id)}/revise`,
         { subject, body: before, instruction: instruction.trim() },
-        setBody,
+        editBody,
         ctrl.signal
       );
-      if (text.trim()) setBody(text.trim());
-      else setBody(before);
+      editBody(text.trim() ? text.trim() : before);
       setAsk('');
     } catch (e) {
       if (ctrl.signal.aborted) {
         if (copilot.current === ctrl) setCopilotNote('Stopped. Undo restores the previous text.');
       } else {
-        setBody(before);
+        editBody(before);
         setUndoBody(null);
         setCopilotNote(
           e instanceof HttpError && e.status === 503
@@ -587,7 +605,7 @@ function EmailPanel({
             Subject
             <Input
               value={subject}
-              onChange={(e) => setSubject(e.target.value)}
+              onChange={(e) => editSubject(e.target.value)}
               disabled={rec.status !== 'proposed' || busy === 'copilot'}
               className="text-sm text-foreground"
             />
@@ -596,7 +614,7 @@ function EmailPanel({
             Message (you can edit it)
             <Textarea
               value={body}
-              onChange={(e) => setBody(e.target.value)}
+              onChange={(e) => editBody(e.target.value)}
               rows={14}
               disabled={rec.status !== 'proposed'}
               readOnly={busy === 'copilot'}
@@ -664,7 +682,7 @@ function EmailPanel({
                     size="sm"
                     variant="ghost"
                     onClick={() => {
-                      setBody(undoBody);
+                      editBody(undoBody);
                       setUndoBody(null);
                       setCopilotNote(null);
                     }}

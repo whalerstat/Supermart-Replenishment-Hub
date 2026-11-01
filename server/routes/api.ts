@@ -224,7 +224,7 @@ export function registerRoutes(app: Application): void {
       return;
     }
     view = { ...view, ...parsed.data, v: view.v + 1 };
-    res.json({ v: view.v });
+    res.json({ view, boot: BOOT });
   });
 
   // ── Screen 2 ──
